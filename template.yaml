@@ -1,0 +1,196 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  A serverless data processing pipeline for ingesting, standardizing, and storing data.
+
+Parameters:
+  OpenAIApiKey:
+    Type: String
+    Description: The API key for the OpenAI service.
+    NoEcho: true
+  InputBucketName:
+    Type: String
+    Description: The name of the S3 bucket for input data.
+    Default: sam-data-pipeline-input-bucket
+  OutputBucketName:
+    Type: String
+    Description: The name of the S3 bucket for output data.
+    Default: sam-data-pipeline-output-bucket
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 256
+    Runtime: nodejs20.x
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        NODE_OPTIONS: "--enable-source-maps"
+    Tracing: Active
+  Api:
+    TracingEnabled: true
+
+Resources:
+  InputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref InputBucketName
+
+  OutputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref OutputBucketName
+
+  ValidateRawValidFormatFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/nodejs-validate-raw-valid-format/
+      Handler: src/index.handler
+      Description: 'Validates CSV input format against expected schema'
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref InputBucketName
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
+
+  MergeCsvDataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/nodejs-merge-csv-data/
+      Handler: src/index.handler
+      Description: 'Merges processed CSV data from distributed map execution'
+      MemorySize: 512
+      Timeout: 300
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref InputBucketName
+        - S3WritePolicy:
+            BucketName: !Ref OutputBucketName
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref OutputBucketName
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
+
+  StandardizationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/nodejs-standardization/
+      Handler: src/index.handler
+      Description: 'Standardizes data using OpenAI API'
+      MemorySize: 512
+      Timeout: 300
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref InputBucketName
+      Environment:
+        Variables:
+          OPENAI_API_KEY: !Ref OpenAIApiKey
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
+
+  MappingRawValidInputFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/nodejs-mapping-raw-valid-input/
+      Handler: src/index.handler
+      Description: 'Maps validated input to standardized output format'
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
+
+  ProcessStandardizedDataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/nodejs-process-standardized-data/
+      Handler: src/index.handler
+      Description: 'Final processing and storage of standardized data'
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Ref OutputBucketName
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref OutputBucketName
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
+
+  IngestionStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachine/ingestion_pipeline.asl.json
+      DefinitionSubstitutions:
+        ValidateRawValidFormatFunctionArn: !GetAtt ValidateRawValidFormatFunction.Arn
+        MergeCsvDataFunctionArn: !GetAtt MergeCsvDataFunction.Arn
+        StandardizationFunctionArn: !GetAtt StandardizationFunction.Arn
+        MappingRawValidInputFunctionArn: !GetAtt MappingRawValidInputFunction.Arn
+        ProcessStandardizedDataFunctionArn: !GetAtt ProcessStandardizedDataFunction.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ValidateRawValidFormatFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref MergeCsvDataFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref StandardizationFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref MappingRawValidInputFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ProcessStandardizedDataFunction
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /pipelines/ingestion/executions
+            Method: post
+            RestApiId: !Ref IngestionApi
+
+  IngestionApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Description: 'API Gateway for triggering the ingestion pipeline'
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
+
+  ProcessingDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-processing-dlq"
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  ProcessingLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/stepfunctions/${AWS::StackName}-ingestion"
+      RetentionInDays: 30
+
+Outputs:
+  StateMachineArn:
+    Description: "The ARN of the ingestion state machine"
+    Value: !Ref IngestionStateMachine
+    Export:
+      Name: !Sub "${AWS::StackName}-StateMachineArn"
+  
+  ApiUrl:
+    Description: "The URL of the API Gateway endpoint"
+    Value: !Sub "https://${IngestionApi}.execute-api.${AWS::Region}.amazonaws.com/prod/pipelines/ingestion/executions"
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiUrl"
+  
+  InputBucketName:
+    Description: "Name of the S3 input bucket"
+    Value: !Ref InputBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-InputBucket"
+  
+  OutputBucketName:
+    Description: "Name of the S3 output bucket" 
+    Value: !Ref OutputBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-OutputBucket"

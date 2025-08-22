@@ -1,0 +1,105 @@
+{
+    "Comment": "An ingestion pipeline that gets triggered by API GW using JSONata expressions",
+    "QueryLanguage": "JSONata",
+    "StartAt": "ParseInput",
+    "States": {
+        "ParseInput": {
+            "Type": "Pass",
+            "Parameters": {
+                "input": "body ~> $fromJSON()"
+            },
+            "Next": "S3 CSV file Ingestion"
+        },
+        "S3 CSV file Ingestion": {
+            "Type": "Map",
+            "ItemProcessor": {
+                "ProcessorConfig": {
+                    "Mode": "DISTRIBUTED",
+                    "ExecutionType": "STANDARD"
+                },
+                "StartAt": "Validate input format",
+                "States": {
+                    "Validate input format": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:states:::lambda:invoke",
+                        "OutputPath": "Payload",
+                        "Parameters": {
+                            "FunctionName": "${ValidateRawValidFormatFunctionArn}",
+                            "Payload": {
+                                "input": "body"
+                            }
+                        },
+                        "Next": "Choice"
+                    },
+                    "Choice": {
+                        "Type": "Choice",
+                        "Choices": [
+                            {
+                                "Condition": "isValidInputFormat = true",
+                                "Next": "Mapping to output format"
+                            }
+                        ],
+                        "Default": "Standardize with OpenAI"
+                    },
+                    "Mapping to output format": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:states:::lambda:invoke",
+                        "OutputPath": "Payload",
+                        "Parameters": {
+                            "FunctionName": "${MappingRawValidInputFunctionArn}",
+                            "Payload": "$"
+                        },
+                        "Next": "Process standardized data"
+                    },
+                    "Standardize with OpenAI": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:states:::lambda:invoke",
+                        "OutputPath": "Payload",
+                        "Parameters": {
+                            "FunctionName": "${StandardizationFunctionArn}",
+                            "Payload": "$"
+                        },
+                        "Next": "Process standardized data"
+                    },
+                    "Process standardized data": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:states:::lambda:invoke",
+                        "OutputPath": "Payload",
+                        "Parameters": {
+                            "FunctionName": "${ProcessStandardizedDataFunctionArn}",
+                            "Payload": "$"
+                        },
+                        "End": true
+                    }
+                }
+            },
+            "ItemReader": {
+                "Resource": "arn:aws:states:::s3:getObject",
+                "ReaderConfig": {
+                    "InputType": "CSV",
+                    "CSVHeaderLocation": "FIRST_ROW"
+                },
+                "Parameters": {
+                    "Bucket": "input.Bucket",
+                    "Key": "input.Key"
+                }
+            },
+            "MaxConcurrency": 1000,
+            "Label": "S3CSVfileIngestion",
+            "ItemBatcher": {
+                "MaxItemsPerBatch": 15
+            },
+            "Next": "Merge CSV Data"
+        },
+        "Merge CSV Data": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "OutputPath": "Payload",
+            "Parameters": {
+                "FunctionName": "${MergeCsvDataFunctionArn}",
+                "Payload": "$"
+            },
+            "End": true
+        }
+    }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "merge-csv-data",
+  "version": "1.0.0",
+  "description": "Merges processed CSV data from distributed map execution",
+  "main": "src/index.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["merge", "csv", "aggregation"],
+  "author": "",
+  "license": "ISC",
+  "type": "module"
+}

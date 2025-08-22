@@ -1,0 +1,291 @@
+# JSONata Migration Guide
+
+This document explains the migration from JSONPath to JSONata in your Step Functions state machine.
+
+## Overview
+
+JSONata provides more powerful and expressive data transformation capabilities compared to JSONPath, with better support for complex data operations and functional programming concepts.
+
+## Key Changes Made
+
+### 1. State Machine Declaration
+
+**Before (JSONPath):**
+```json
+{
+    "Comment": "An ingestion pipeline that gets triggered by API GW",
+    "StartAt": "ParseInput",
+    ...
+}
+```
+
+**After (JSONata):**
+```json
+{
+    "Comment": "An ingestion pipeline that gets triggered by API GW using JSONata expressions",
+    "QueryLanguage": "JSONata",
+    "StartAt": "ParseInput",
+    ...
+}
+```
+
+### 2. Parse Input State
+
+**Before (JSONPath):**
+```json
+"ParseInput": {
+    "Type": "Pass",
+    "Parameters": {
+        "input.$": "States.StringToJson($.body)"
+    },
+    "Next": "S3 CSV file Ingestion"
+}
+```
+
+**After (JSONata):**
+```json
+"ParseInput": {
+    "Type": "Pass",
+    "Parameters": {
+        "input": "body ~> $fromJSON()"
+    },
+    "Next": "S3 CSV file Ingestion"
+}
+```
+
+### 3. Lambda Task Parameters
+
+**Before (JSONPath):**
+```json
+"Parameters": {
+    "FunctionName": "${ValidateRawValidFormatFunctionArn}",
+    "Payload": {
+        "input.$": "$.body"
+    }
+}
+```
+
+**After (JSONata):**
+```json
+"Parameters": {
+    "FunctionName": "${ValidateRawValidFormatFunctionArn}",
+    "Payload": {
+        "input": "body"
+    }
+}
+```
+
+### 4. Output Path Specifications
+
+**Before (JSONPath):**
+```json
+"OutputPath": "$.Payload"
+```
+
+**After (JSONata):**
+```json
+"OutputPath": "Payload"
+```
+
+### 5. Choice State Conditions
+
+**Before (JSONPath):**
+```json
+"Choices": [
+    {
+        "Variable": "$.isValidInputFormat",
+        "BooleanEquals": true,
+        "Next": "Mapping to output format"
+    }
+]
+```
+
+**After (JSONata):**
+```json
+"Choices": [
+    {
+        "Condition": "isValidInputFormat = true",
+        "Next": "Mapping to output format"
+    }
+]
+```
+
+### 6. S3 ItemReader Parameters
+
+**Before (JSONPath):**
+```json
+"Parameters": {
+    "Bucket.$": "$.input.Bucket",
+    "Key.$": "$.input.Key"
+}
+```
+
+**After (JSONata):**
+```json
+"Parameters": {
+    "Bucket": "input.Bucket",
+    "Key": "input.Key"
+}
+```
+
+### 7. Payload Passing
+
+**Before (JSONPath):**
+```json
+"Payload.$": "$"
+```
+
+**After (JSONata):**
+```json
+"Payload": "$"
+```
+
+## JSONata Advantages
+
+### 1. More Expressive Syntax
+- Cleaner, more readable expressions
+- No need for `$` prefixes and `.` suffixes
+- Native support for functional programming concepts
+
+### 2. Enhanced Data Transformation
+```jsonata
+// Complex data transformation example
+{
+    "processedItems": items[isValid = true].{
+        "id": id,
+        "normalizedName": $uppercase(name),
+        "timestamp": $now()
+    }
+}
+```
+
+### 3. Built-in Functions
+JSONata includes many built-in functions for:
+- String manipulation: `$uppercase()`, `$lowercase()`, `$substring()`
+- Date/time operations: `$now()`, `$toMillis()`
+- Array operations: `$map()`, `$filter()`, `$reduce()`
+- Math operations: `$sum()`, `$max()`, `$min()`
+
+### 4. Conditional Logic
+```jsonata
+// Inline conditional expressions
+items ~> $map(function($item) {
+    $item.status = "active" ? $item : {"id": $item.id, "status": "inactive"}
+})
+```
+
+## Migration Benefits for Your Pipeline
+
+### 1. Improved Readability
+The JSONata expressions are more intuitive and easier to understand:
+- `body ~> $fromJSON()` vs `States.StringToJson($.body)`
+- `isValidInputFormat = true` vs `"Variable": "$.isValidInputFormat", "BooleanEquals": true`
+
+### 2. Better Error Handling
+JSONata provides more descriptive error messages and better debugging capabilities.
+
+### 3. Enhanced Data Processing
+Your spec steering pipeline can now leverage JSONata's powerful data transformation capabilities for:
+- Complex field mappings
+- Data validation expressions
+- Conditional data routing
+
+### 4. Future Extensibility
+JSONata makes it easier to add complex data transformations without requiring additional Lambda functions.
+
+## Testing Your JSONata State Machine
+
+### 1. Validate Syntax
+```bash
+# Validate the state machine definition
+sam validate --region ap-southeast-1
+```
+
+### 2. Local Testing
+```bash
+# Start Step Functions Local with JSONata support
+sam local start-stepfunctions
+
+# Test execution
+aws stepfunctions start-execution \
+  --endpoint http://localhost:8083 \
+  --state-machine-arn "arn:aws:states:us-east-1:123456789012:stateMachine:IngestionStateMachine" \
+  --input '{"body": "{\"Bucket\": \"test-bucket\", \"Key\": \"test.csv\"}"}'
+```
+
+### 3. Production Deployment
+```bash
+# Deploy with JSONata support
+./scripts/deploy.sh dev ap-southeast-1
+```
+
+## JSONata Expression Examples for Your Pipeline
+
+### 1. Enhanced Input Parsing
+```jsonata
+{
+    "input": body ~> $fromJSON(),
+    "metadata": {
+        "timestamp": $now(),
+        "requestId": $uuid(),
+        "region": "ap-southeast-1"
+    }
+}
+```
+
+### 2. Conditional Data Processing
+```jsonata
+{
+    "processingPath": isValidInputFormat ? "direct" : "standardization",
+    "items": items[isValid = true],
+    "errorCount": $count(items[isValid = false])
+}
+```
+
+### 3. Advanced Field Mapping
+```jsonata
+items ~> $map(function($item) {
+    {
+        "id": $item.id,
+        "fullName": $item.firstName & " " & $item.lastName,
+        "email": $lowercase($item.email),
+        "phone": $replace($item.phone, /[^\d]/g, ""),
+        "isValid": $exists($item.email) and $exists($item.phone)
+    }
+})
+```
+
+## Best Practices
+
+### 1. Use Descriptive Variable Names
+```jsonata
+// Good
+validItems := items[isValid = true];
+processedData := validItems ~> $map($processItem)
+
+// Less clear
+x := items[isValid = true];
+y := x ~> $map($processItem)
+```
+
+### 2. Leverage Built-in Functions
+```jsonata
+// Efficient data processing
+{
+    "totalCount": $count(items),
+    "validCount": $count(items[isValid = true]),
+    "processingTime": $now() - startTime
+}
+```
+
+### 3. Handle Edge Cases
+```jsonata
+// Safe field access with defaults
+{
+    "name": $exists(firstName) ? firstName : "Unknown",
+    "email": $lowercase($exists(email) ? email : ""),
+    "items": $exists(items) ? items : []
+}
+```
+
+Your Step Functions state machine now uses JSONata for more powerful and expressive data transformations! 🚀

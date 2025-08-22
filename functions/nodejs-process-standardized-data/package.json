@@ -1,0 +1,13 @@
+{
+  "name": "process-standardized-data",
+  "version": "1.0.0",
+  "description": "Final processing and storage of standardized data",
+  "main": "src/index.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["processing", "storage", "final"],
+  "author": "",
+  "license": "ISC",
+  "type": "module"
+}

@@ -1,0 +1,3 @@
+{
+  "body": "{\"Bucket\": \"sam-data-pipeline-input-bucket\", \"Key\": \"sample-data.csv\"}"
+}

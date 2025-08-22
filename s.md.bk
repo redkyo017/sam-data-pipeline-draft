@@ -1,0 +1,74 @@
+# Steering Document: SAM Data Pipeline
+
+## 1. Project Overview
+
+This project implements a serverless data processing pipeline using AWS SAM. The pipeline ingests raw data, validates its format, merges it, standardizes it using an AI service, maps the fields, and finally processes and stores the result in a CSV file in an S3 bucket. The entire workflow is orchestrated by an AWS Step Functions state machine.
+
+## 2. Architecture
+
+The architecture consists of an AWS Step Functions state machine that orchestrates a series of AWS Lambda functions. The data flows through the following steps:
+
+1.  **Input:** Raw data is provided to the Step Functions state machine.
+2.  **Validation:** The format of the raw data is validated.
+3.  **Merge:** If the input consists of multiple CSV files, they are merged into a single file.
+4.  **Standardization:** The data is standardized using the OpenAI API.
+5.  **Mapping:** The fields of the standardized data are mapped to a new schema.
+6.  **Process and Store:** The processed data is converted to a CSV file and stored in an S3 bucket.
+
+## 3. Components
+
+### 3.1. AWS Step Functions
+
+The core of the application is the `ingestion_pipeline.asl.json` state machine, which defines the following states:
+
+-   **Validate Raw-Valid Format:** Triggers the `nodejs-validate-raw-valid-format` Lambda function to check the input data format.
+-   **Merge CSV Data:** Triggers the `nodejs-merge-csv-data` Lambda function to merge multiple CSV files.
+-   **Standardization:** Triggers the `nodejs-standardization` Lambda function to standardize the data using OpenAI.
+-   **Mapping Raw-Valid Input:** Triggers the `nodejs-mapping-raw-valid-input` Lambda function to map the data fields.
+-   **Process Standardized Data:** Triggers the `node-process-standardized-data` Lambda function to save the final data to S3.
+-   **Success/Fail:** Terminal states for the pipeline execution.
+
+### 3.2. AWS Lambda Functions
+
+-   **`nodejs-validate-raw-valid-format`**:
+    -   **Purpose:** Validates the format of the incoming raw data, checking for the presence of required columns.
+    -   **Source:** `functions/nodejs-validate-raw-valid-format/src/index.js`
+-   **`nodejs-merge-csv-data`**:
+    -   **Purpose:** Merges multiple CSV files from an S3 bucket into a single CSV file.
+    -   **Source:** `functions/nodejs-merge-csv-data/src/index.mjs`
+-   **`nodejs-standardization`**:
+    -   **Purpose:** Uses the OpenAI API to standardize the data into a consistent format. Requires an `OPENAI_API_KEY` environment variable.
+    -   **Source:** `functions/nodejs-standardization/src/index.js`
+-   **`nodejs-mapping-raw-valid-input`**:
+    -   **Purpose:** Maps the fields from the raw input data to a more structured format.
+    -   **Source:** `functions/nodejs-mapping-raw-valid-input/src/index.mjs`
+-   **`node-process-standardized-data`**:
+    -   **Purpose:** Converts the processed data into a CSV file and uploads it to an S3 bucket.
+    -   **Source:** `functions/node-process-standardized-data/src/index.mjs`
+
+### 3.3. Amazon S3
+
+The project will use S3 buckets for:
+
+-   **Input:** Staging raw data files to be processed.
+-   **Output:** Storing the final processed and standardized CSV files.
+
+*(Note: The bucket names are currently hardcoded in the Lambda functions. This will be parameterized in the SAM template.)*
+
+## 4. Data Flow
+
+1.  The pipeline is initiated with a JSON input to the Step Function, containing information about the data to be processed.
+2.  The `Validate Raw-Valid Format` state checks if the data has the correct columns.
+3.  The `Merge CSV Data` state combines multiple input files into one.
+4.  The `Standardization` state cleans and standardizes the data using AI.
+5.  The `Mapping Raw-Valid Input` state restructures the data fields.
+6.  The `Process Standardized Data` state converts the final data into a CSV file and saves it to the output S3 bucket.
+7.  If any step fails, the pipeline transitions to the `Fail` state. On success, it reaches the `Success` state.
+
+## 5. Setup and Deployment
+
+To deploy this application, you will use the AWS SAM CLI. The general steps are:
+
+1.  **Define Resources:** Update `template.yaml` to define all the necessary resources (Lambda functions, Step Function, S3 buckets, IAM roles).
+2.  **Build:** Run `sam build` to package the application.
+3.  **Deploy:** Run `sam deploy` to deploy the application to your AWS account.

@@ -1,0 +1,13 @@
+{
+  "name": "mapping-raw-valid-input",
+  "version": "1.0.0",
+  "description": "Maps validated input to output format",
+  "main": "src/index.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["mapping", "transformation", "data"],
+  "author": "",
+  "license": "ISC",
+  "type": "module"
+}
