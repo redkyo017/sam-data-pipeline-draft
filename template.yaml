@@ -140,6 +140,17 @@ Resources:
             FunctionName: !Ref MappingRawValidInputFunction
         - LambdaInvokePolicy:
             FunctionName: !Ref ProcessStandardizedDataFunction
+        - S3ReadPolicy:
+            BucketName: !Ref InputBucketName
+        - S3WritePolicy:
+            BucketName: !Ref OutputBucketName
+        - S3CrudPolicy:
+            BucketName: !Ref InputBucketName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+              Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:*"
       Events:
         ApiEvent:
           Type: Api

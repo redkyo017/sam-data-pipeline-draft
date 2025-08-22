@@ -1,15 +1,7 @@
 {
-    "Comment": "An ingestion pipeline that gets triggered by API GW using JSONata expressions",
-    "QueryLanguage": "JSONata",
-    "StartAt": "ParseInput",
+    "Comment": "An ingestion pipeline that gets triggered by API GW",
+    "StartAt": "S3 CSV file Ingestion",
     "States": {
-        "ParseInput": {
-            "Type": "Pass",
-            "Parameters": {
-                "input": "body ~> $fromJSON()"
-            },
-            "Next": "S3 CSV file Ingestion"
-        },
         "S3 CSV file Ingestion": {
             "Type": "Map",
             "ItemProcessor": {
@@ -22,12 +14,10 @@
                     "Validate input format": {
                         "Type": "Task",
                         "Resource": "arn:aws:states:::lambda:invoke",
-                        "OutputPath": "Payload",
+                        "ResultPath": "$.validation",
                         "Parameters": {
                             "FunctionName": "${ValidateRawValidFormatFunctionArn}",
-                            "Payload": {
-                                "input": "body"
-                            }
+                            "Payload.$": "$"
                         },
                         "Next": "Choice"
                     },
@@ -35,7 +25,8 @@
                         "Type": "Choice",
                         "Choices": [
                             {
-                                "Condition": "isValidInputFormat = true",
+                                "Variable": "$.validation.Payload.isValidInputFormat",
+                                "BooleanEquals": true,
                                 "Next": "Mapping to output format"
                             }
                         ],
@@ -44,30 +35,30 @@
                     "Mapping to output format": {
                         "Type": "Task",
                         "Resource": "arn:aws:states:::lambda:invoke",
-                        "OutputPath": "Payload",
+                        "ResultPath": "$.mapping",
                         "Parameters": {
                             "FunctionName": "${MappingRawValidInputFunctionArn}",
-                            "Payload": "$"
+                            "Payload.$": "$"
                         },
                         "Next": "Process standardized data"
                     },
                     "Standardize with OpenAI": {
                         "Type": "Task",
                         "Resource": "arn:aws:states:::lambda:invoke",
-                        "OutputPath": "Payload",
+                        "ResultPath": "$.standardization",
                         "Parameters": {
                             "FunctionName": "${StandardizationFunctionArn}",
-                            "Payload": "$"
+                            "Payload.$": "$"
                         },
                         "Next": "Process standardized data"
                     },
                     "Process standardized data": {
                         "Type": "Task",
                         "Resource": "arn:aws:states:::lambda:invoke",
-                        "OutputPath": "Payload",
+                        "ResultPath": "$.processed",
                         "Parameters": {
                             "FunctionName": "${ProcessStandardizedDataFunctionArn}",
-                            "Payload": "$"
+                            "Payload.$": "$"
                         },
                         "End": true
                     }
@@ -80,8 +71,8 @@
                     "CSVHeaderLocation": "FIRST_ROW"
                 },
                 "Parameters": {
-                    "Bucket": "input.Bucket",
-                    "Key": "input.Key"
+                    "Bucket.$": "$.Bucket",
+                    "Key.$": "$.Key"
                 }
             },
             "MaxConcurrency": 1000,
@@ -94,10 +85,9 @@
         "Merge CSV Data": {
             "Type": "Task",
             "Resource": "arn:aws:states:::lambda:invoke",
-            "OutputPath": "Payload",
             "Parameters": {
                 "FunctionName": "${MergeCsvDataFunctionArn}",
-                "Payload": "$"
+                "Payload.$": "$"
             },
             "End": true
         }
