@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(find:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(aws cloudformation delete-stack:*)",
+      "Bash(aws cloudformation wait:*)",
+      "Bash(mkdir:*)",
+      "Bash(npm install:*)",
+      "Bash(sam build)",
+      "Bash(./scripts/deploy.sh:*)"
     ],
     "deny": [],
     "ask": []

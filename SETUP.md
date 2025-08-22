@@ -177,6 +177,12 @@ aws cloudformation describe-stacks \
   --stack-name sam-data-pipeline-dev \
   --query 'Stacks[0].Outputs' \
   --output table
+
+# Delete CloudFormation stack 
+aws cloudformation delete-stack --stack-name sam-data-pipeline-dev --region ap-southeast-1
+
+# wait for the stack deletion to complete:
+aws cloudformation wait stack-delete-complete --stack-name sam-data-pipeline-dev --region ap-southeast-1
 ```
 
 ## Local Development & Testing
