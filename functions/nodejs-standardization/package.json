@@ -1,0 +1,8 @@
+{
+  "name": "nodejs-standardization",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "openai": "^5.15.0"
+  }
+}

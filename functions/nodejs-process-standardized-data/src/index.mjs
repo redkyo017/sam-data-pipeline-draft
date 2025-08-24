@@ -10,58 +10,61 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 const s3 = new S3Client({});
 
 export const handler = async (event) => {
-  // Normalize input: support event = [...] or event.items = [...]
-  const rows = Array.isArray(event) ? event : Array.isArray(event?.items) ? event.items : [];
+  console.log(
+    "Processing standardized data event:",
+    JSON.stringify(event, null, 2),
+  );
+
+  // Extract execution ID and data from the payload structure
+  const executionId = event?.executionId || "unknown-execution";
+  const actualData = event?.data || event;
+
+  // Get standardized data from the correct path
+  // When ResultPath is "$.standardization", the Lambda result is stored in actualData.standardization.Payload
+  const rows = actualData?.standardization?.Payload || [];
+  console.log("Extracted standardized rows:", rows);
+
   if (!Array.isArray(rows) || rows.length === 0) {
-    throw new Error("No rows found in input. Pass an array (event or event.items).");
+    console.log("No standardized rows found in input");
+    return {
+      bucket: process.env.BUCKET_NAME,
+      key: null,
+    };
   }
 
-  // Build a stable header across all objects (union of keys)
-  const headerSet = new Set();
-  for (const r of rows) {
-    if (r && typeof r === "object") {
-      Object.keys(r).forEach(k => headerSet.add(k));
-    }
-  }
-  const headers = [...headerSet];
+  // The standardized rows already include campaign_id and commit_id from the standardization function
+  // No need to add them again, just use the enriched data as-is
+  const enrichedRows = rows;
 
-  // CSV escaping (RFC4180-ish)
-  const esc = (val) => {
-    if (val === null || val === undefined) return "";
-    const s = String(val);
-    // if contains quote, comma, CR or LF, wrap with quotes and escape quotes
-    if (/[",\r\n]/.test(s)) {
-      return `"${s.replace(/"/g, '""')}"`;
-    }
-    return s;
-  };
+  // Create JSON output
+  const jsonBody = JSON.stringify(enrichedRows, null, 2);
+  console.log("con co be be - checking output mapping", jsonBody);
 
-  // Build CSV text
-  const lines = [];
-  lines.push(headers.map(esc).join(","));
-  for (const r of rows) {
-    const line = headers.map(h => esc(r?.[h]));
-    lines.push(line.join(","));
-  }
-  const csvBody = lines.join("\n");
-
-  // Target S3 location (e.g., my-prefix/data-2025-08-18T12-34-56Z.csv)
+  // Target S3 location with execution-specific path
   const bucket = process.env.BUCKET_NAME;
   if (!bucket) throw new Error("BUCKET_NAME env var is required.");
-  const randomNumber = Math.floor(Math.random() * 1000000) + 1;
-  const key = `test-ingestion/data-${randomNumber}.csv`;
-  // Upload
-  await s3.send(new PutObjectCommand({
-    Bucket: bucket,
-    Key: key,
-    Body: csvBody,
-    ContentType: "text/csv; charset=utf-8"
-  }));
 
-  // Return where we put it (useful for next states)
+  // Use the execution ID passed from the state machine
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const randomId = Math.floor(Math.random() * 1000000);
+  const key = `temp-batch-files/${executionId}/batch-${timestamp}-${randomId}.json`;
+  // Upload
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: jsonBody,
+      ContentType: "application/json; charset=utf-8",
+    }),
+  );
+
+  // Return only essential S3 location to avoid 32KB Step Functions limit
+  console.log(
+    `Successfully saved batch to s3://${bucket}/${key} (${rows.length} records)`,
+  );
   return {
     bucket,
     key,
-    recordCount: rows.length
   };
 };

@@ -68,6 +68,17 @@ Resources:
             BucketName: !Ref InputBucketName
         - S3WritePolicy:
             BucketName: !Ref OutputBucketName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+                - s3:DeleteObject
+              Resource: "arn:aws:s3:::*/*"
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource: "arn:aws:s3:::*"
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref OutputBucketName
@@ -129,6 +140,7 @@ Resources:
         StandardizationFunctionArn: !GetAtt StandardizationFunction.Arn
         MappingRawValidInputFunctionArn: !GetAtt MappingRawValidInputFunction.Arn
         ProcessStandardizedDataFunctionArn: !GetAtt ProcessStandardizedDataFunction.Arn
+        BatchFailureQueueUrl: !Ref BatchFailureQueue
       Policies:
         - LambdaInvokePolicy:
             FunctionName: !Ref ValidateRawValidFormatFunction
@@ -151,6 +163,10 @@ Resources:
               Action:
                 - states:StartExecution
               Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:*"
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt BatchFailureQueue.Arn
       Events:
         ApiEvent:
           Type: Api
@@ -173,6 +189,12 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Sub "${AWS::StackName}-processing-dlq"
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  BatchFailureQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-batch-failure-dlq"
       MessageRetentionPeriod: 1209600  # 14 days
 
   ProcessingLogGroup:

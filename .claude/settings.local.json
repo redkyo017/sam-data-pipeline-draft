@@ -8,7 +8,12 @@
       "Bash(mkdir:*)",
       "Bash(npm install:*)",
       "Bash(sam build)",
-      "Bash(./scripts/deploy.sh:*)"
+      "Bash(./scripts/deploy.sh:*)",
+      "Bash(aws stepfunctions list-map-runs:*)",
+      "Bash(aws stepfunctions:*)",
+      "Bash(aws logs describe-log-groups:*)",
+      "Bash(aws logs:*)",
+      "Bash(aws s3 ls:*)"
     ],
     "deny": [],
     "ask": []

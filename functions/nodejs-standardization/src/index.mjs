@@ -1,5 +1,5 @@
-// index.js
-const { OpenAI } = require('openai');
+// index.jms
+import OpenAI from 'openai';
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -40,49 +40,53 @@ const TARGET_SCHEMA = {
     company_name: "",
     job_title: "",
     country: "",
-    linked_in_url: "",
+    linkedin_url: "",
   };
 
-exports.handler = async (event, context) => {
+export const handler = async (event, context) => {
     console.log('Processing batch raw Data:', event, context);
-    // console.log('Processing batch:', event.batchId, 'with', event?.csvData?.Items.length, 'records');
-    const items = event?.items || [];
-    // return items || []
+    
+    let batchItems = [];
+    let campaign_id = "default-campaign";
+    let commit_id = null;
+    
+    if (event.Items && Array.isArray(event.Items)) {
+        // Extract from ItemBatcher structure
+        batchItems = event.Items.map(item => item.items);
+        // Get campaign_id and commit_id from the first item (they should be the same for all items in batch)
+        if (event.Items.length > 0) {
+            campaign_id = event.Items[0].campaign_id || "default-campaign";
+            commit_id = event.Items[0].commit_id;
+        }
+    } else {
+        // Fallback for direct structure
+        campaign_id = event?.campaign_id || "default-campaign";
+        commit_id = event?.commit_id;
+        const items = Array.isArray(event?.items) ? event.items : (event?.items ? [event.items] : (event || []));
+        batchItems = Array.isArray(items) ? items : [items];
+    }
+    
     try {
-        // Validate input
-        // if (!event.csvData || !Array.isArray(event.csvData)) {
-        //     throw new Error('Invalid input: csvData must be an array');
-        // }
-
         if (!process.env.OPENAI_API_KEY) {
             throw new Error('OPENAI_API_KEY environment variable not set');
         }
 
-        // Standardize data using OpenAI
-        const standardizedRecords = await standardizeWithOpenAI(items);
+        // Standardize batch of data using OpenAI (saves tokens!)
+        const standardizedRecords = await standardizeWithOpenAI(batchItems);
 
-        // Return standardized data for next Step Functions state
-        // const output = {
-        //     standardizedData: standardizedRecords,
-        //     batchId: event?.batchId,
-        //     processedCount: standardizedRecords.length,
-        //     status: 'completed'
-        // };
-        const output = standardizedRecords || [];
+        // Add campaign_id and commit_id to each standardized record
+        const enrichedRecords = standardizedRecords.map(record => ({
+            campaign_id: campaign_id,
+            commit_id: commit_id,
+            ...record
+        }));
 
-        console.log('Successfully processed batch:', event?.batchId, 'with', standardizedRecords.length, 'records');
-        return output;
+        console.log('Successfully processed batch with', enrichedRecords.length, 'records');
+        return enrichedRecords;
 
     } catch (error) {
-        console.error('Error processing batch:', event.batchId, error);
-        
-        // return {
-        //     batchId: event?.batchId,
-        //     processedCount: 0,
-        //     status: 'failed',
-        //     error: error.message
-        // };
-        return []
+        console.error('Error processing batch:', error);
+        return []; // Return empty array for failed batches
     }
 };
 
@@ -91,8 +95,7 @@ async function standardizeWithOpenAI(csvData) {
 
     try {
         const response = await openai.chat.completions.create({
-        // const response = await openai.responses.create({
-            model: 'gpt-4.1',
+            model: 'gpt-4o-mini',
             messages: [
                 {
                     role: 'system',
@@ -127,15 +130,19 @@ async function standardizeWithOpenAI(csvData) {
         let standardizedRecords;
         try {
             standardizedRecords = JSON.parse(responseContent);
-            console.log("con heo", standardizedRecords)
+            console.log("Parsed standardized records:", standardizedRecords);
         } catch (parseError) {
             console.error('Failed to parse OpenAI response:', responseContent);
             throw new Error('Invalid JSON response from OpenAI: ' + parseError.message);
         }
 
-        // Validate that we got an array
+        // Ensure we have an array for batch processing
         if (!Array.isArray(standardizedRecords)) {
-            throw new Error('OpenAI response is not an array');
+            if (typeof standardizedRecords === 'object' && standardizedRecords !== null) {
+                standardizedRecords = [standardizedRecords]; // Wrap single object in array
+            } else {
+                throw new Error('OpenAI response is not a valid array or object');
+            }
         }
 
         return standardizedRecords;
@@ -182,25 +189,33 @@ function createStandardizationPrompt(csvData) {
 // ]
 // `;
 
-return `You are a data standardization assistant. Your task is to extract and standardize contact informations from the provided records.
+return `You are a data standardization assistant. Your task is to extract and standardize contact information from the provided batch of records.
 
-Input Record:
+Input Records Batch:
 ${csvDataJson}
 
 Please extract and standardize the data according to the following schema. Fill in as many fields as possible based on the input data. Leave fields empty if no relevant information is available.
 
-Output Schema:
+Output Schema (for each record):
 ${schemaJson}
 
 Rules:
 1. Extract name components (first name, last name) if available, or parse from full name
-2. Remove all emoji icon, just keep the meaningful character
+2. Remove all emoji icons, just keep the meaningful characters
 3. Standardize job titles to common industry terms
 4. Extract all contact information (emails, phones, addresses)
 5. Identify and extract social media URLs
 6. Extract location information
-7. Return ONLY the filled JSON schema, nothing else
-8. Remove value if have empty field name
-9. Return only a JSON array of standardized records, no additional text or markdown
+7. Process ALL records in the input batch
+8. Return ONLY a JSON array of standardized records, nothing else
+9. Remove fields that have empty values from each record
+10. Return only the JSON array, no additional text or markdown
+
+Example output format for a batch:
+[
+  { standardized_record_1 },
+  { standardized_record_2 },
+  ...
+]
 `;
 }

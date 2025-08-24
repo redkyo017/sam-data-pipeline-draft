@@ -1,9 +1,27 @@
 {
     "Comment": "An ingestion pipeline that gets triggered by API GW",
-    "StartAt": "S3 CSV file Ingestion",
+    "StartAt": "Generate Commit ID",
     "States": {
+        "Generate Commit ID": {
+            "Type": "Pass",
+            "Assign": {
+                "campaign_id.$": "$.campaign_id",
+                "commit_id.$": "States.UUID()"
+            },
+            "Parameters": {
+                "Bucket.$": "$.Bucket",
+                "Key.$": "$.Key",
+                "campaign_id.$": "$.campaign_id"
+            },
+            "Next": "S3 CSV file Ingestion"
+        },
         "S3 CSV file Ingestion": {
             "Type": "Map",
+            "ItemSelector": {
+                "items.$": "$$.Map.Item.Value",
+                "commit_id.$": "$commit_id",
+                "campaign_id.$": "$campaign_id"
+            },
             "ItemProcessor": {
                 "ProcessorConfig": {
                     "Mode": "DISTRIBUTED",
@@ -19,6 +37,13 @@
                             "FunctionName": "${ValidateRawValidFormatFunctionArn}",
                             "Payload.$": "$"
                         },
+                        "Catch": [
+                            {
+                                "ErrorEquals": ["States.ALL"],
+                                "Next": "Prepare Failure Message",
+                                "ResultPath": "$.error"
+                            }
+                        ],
                         "Next": "Choice"
                     },
                     "Choice": {
@@ -40,6 +65,13 @@
                             "FunctionName": "${MappingRawValidInputFunctionArn}",
                             "Payload.$": "$"
                         },
+                        "Catch": [
+                            {
+                                "ErrorEquals": ["States.ALL"],
+                                "Next": "Prepare Failure Message",
+                                "ResultPath": "$.error"
+                            }
+                        ],
                         "Next": "Process standardized data"
                     },
                     "Standardize with OpenAI": {
@@ -50,16 +82,58 @@
                             "FunctionName": "${StandardizationFunctionArn}",
                             "Payload.$": "$"
                         },
+                        "Catch": [
+                            {
+                                "ErrorEquals": ["States.ALL"],
+                                "Next": "Prepare Failure Message",
+                                "ResultPath": "$.error"
+                            }
+                        ],
                         "Next": "Process standardized data"
                     },
                     "Process standardized data": {
                         "Type": "Task",
                         "Resource": "arn:aws:states:::lambda:invoke",
-                        "ResultPath": "$.processed",
                         "Parameters": {
                             "FunctionName": "${ProcessStandardizedDataFunctionArn}",
-                            "Payload.$": "$"
+                            "Payload": {
+                                "data.$": "$",
+                                "executionId.$": "$$.Execution.Name"
+                            }
                         },
+                        "OutputPath": "$.Payload",
+                        "Catch": [
+                            {
+                                "ErrorEquals": ["States.ALL"],
+                                "Next": "Prepare Failure Message",
+                                "ResultPath": "$.error"
+                            }
+                        ],
+                        "End": true
+                    },
+                    "Prepare Failure Message": {
+                        "Type": "Pass",
+                        "Parameters": {
+                            "failureMessage": {
+                                "executionId.$": "$$.Execution.Name",
+                                "campaign_id.$": "$.Items[0].campaign_id",
+                                "commit_id.$": "$.Items[0].commit_id",
+                                "failedBatchSize.$": "States.ArrayLength($.Items)",
+                                "error.$": "$.error.Cause",
+                                "timestamp.$": "$$.State.EnteredTime",
+                                "batchIndex.$": "$$.Map.Item.Index"
+                            }
+                        },
+                        "Next": "Send Batch Failure to SQS"
+                    },
+                    "Send Batch Failure to SQS": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:states:::sqs:sendMessage",
+                        "Parameters": {
+                            "QueueUrl": "${BatchFailureQueueUrl}",
+                            "MessageBody.$": "States.JsonToString($.failureMessage)"
+                        },
+                        "ResultPath": "$.sqsResult",
                         "End": true
                     }
                 }
@@ -77,9 +151,47 @@
             },
             "MaxConcurrency": 1000,
             "Label": "S3CSVfileIngestion",
+            "ToleratedFailurePercentage": 100,
+            "ToleratedFailureCount": 10000,
             "ItemBatcher": {
                 "MaxItemsPerBatch": 15
             },
+            "Next": "Prepare Execution Summary",
+            "Catch": [
+                {
+                    "ErrorEquals": ["States.ALL"],
+                    "Next": "Prepare Execution Summary",
+                    "ResultPath": "$.mapError"
+                }
+            ]
+        },
+        "Prepare Execution Summary": {
+            "Type": "Pass",
+            "Parameters": {
+                "summaryMessage": {
+                    "executionId.$": "$$.Execution.Name",
+                    "totalBatches.$": "States.ArrayLength($)",
+                    "successfulBatches.$": "States.ArrayLength($)",
+                    "timestamp.$": "$$.State.EnteredTime",
+                    "type": "EXECUTION_SUMMARY"
+                },
+                "originalData.$": "$"
+            },
+            "Next": "Send Execution Summary"
+        },
+        "Send Execution Summary": {
+            "Type": "Task", 
+            "Resource": "arn:aws:states:::sqs:sendMessage",
+            "Parameters": {
+                "QueueUrl": "${BatchFailureQueueUrl}",
+                "MessageBody.$": "States.JsonToString($.summaryMessage)"
+            },
+            "ResultPath": "$.summaryResult",
+            "Next": "Restore Data for Merge"
+        },
+        "Restore Data for Merge": {
+            "Type": "Pass",
+            "InputPath": "$.originalData",
             "Next": "Merge CSV Data"
         },
         "Merge CSV Data": {
@@ -87,7 +199,10 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
                 "FunctionName": "${MergeCsvDataFunctionArn}",
-                "Payload.$": "$"
+                "Payload": {
+                    "data.$": "$",
+                    "executionId.$": "$$.Execution.Name"
+                }
             },
             "End": true
         }
