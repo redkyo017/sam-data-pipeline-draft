@@ -149,7 +149,7 @@
                     "Key.$": "$.Key"
                 }
             },
-            "MaxConcurrency": 1000,
+            "MaxConcurrency": ${MaxConcurrency},
             "Label": "S3CSVfileIngestion",
             "ToleratedFailurePercentage": 100,
             "ToleratedFailureCount": 10000,
