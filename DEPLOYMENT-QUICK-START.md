@@ -4,8 +4,8 @@
 
 | Environment | Region | Command |
 |-------------|--------|---------|
-| **Staging** | us-east-1 | `./scripts/deploy-staging.sh $OPENAI_API_KEY` |
-| **Production** | us-west-2 | `./scripts/deploy-production.sh $OPENAI_API_KEY_PROD` |
+| **Staging** | ap-southeast-1 | `./scripts/deploy-staging.sh $OPENAI_API_KEY` |
+| **Production** | ap-southeast-2 | `./scripts/deploy-production.sh $OPENAI_API_KEY_PROD` |
 
 ## Common Commands
 
@@ -50,13 +50,13 @@ export OPENAI_API_KEY_PROD="sk-production-key-here"
 | Lambda Timeout | 120s | 300s |
 | Step Functions Concurrency | 500 | 1000 |
 | Log Retention | 14 days | 30 days |
-| Region | us-east-1 | us-west-2 |
+| Region | ap-southeast-1 | ap-southeast-1 |
 
 ## Troubleshooting
 
 ```bash
 # Validate template
-sam validate --region us-east-1
+sam validate --region ap-southeast-1
 
 # Check AWS credentials
 aws sts get-caller-identity

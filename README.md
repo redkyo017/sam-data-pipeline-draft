@@ -39,7 +39,7 @@ The pipeline consists of:
 
 2. **Deploy the application:**
    ```bash
-   ./scripts/deploy.sh dev us-east-1
+   ./scripts/deploy.sh dev ap-southeast-1
    ```
    
    Or manually:
@@ -54,7 +54,7 @@ The pipeline consists of:
    aws s3 cp sample-data.csv s3://your-input-bucket/
    
    # Or trigger via API Gateway
-   curl -X POST https://your-api-id.execute-api.us-east-1.amazonaws.com/prod/pipelines/ingestion/executions \
+   curl -X POST https://your-api-id.execute-api.ap-southeast-1.amazonaws.com/prod/pipelines/ingestion/executions \
      -H "Content-Type: application/json" \
      -d '{"Bucket": "your-input-bucket", "Key": "sample-data.csv"}'
    ```
@@ -109,7 +109,7 @@ functions/function-name/
 sam build
 
 # Deploy to specific environment
-./scripts/deploy.sh prod us-west-2
+./scripts/deploy.sh prod ap-southeast-1
 
 # Validate template
 sam validate

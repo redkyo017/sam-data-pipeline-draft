@@ -32,10 +32,10 @@ fi
 # Environment-specific configurations (from samconfig.toml)
 if [ "$ENVIRONMENT" = "staging" ]; then
     STACK_NAME="sam-data-pipeline-staging"
-    REGION="us-east-1"
+    REGION="ap-southeast-1"
 elif [ "$ENVIRONMENT" = "production" ]; then
     STACK_NAME="sam-data-pipeline-production"
-    REGION="us-west-2"
+    REGION="ap-southeast-1"
 fi
 
 echo ""

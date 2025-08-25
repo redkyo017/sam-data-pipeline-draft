@@ -16,8 +16,8 @@ Our deployment strategy implements:
 
 | Environment | Region | Stack Name | Lambda Memory | Timeout | Concurrency | Log Retention |
 |------------|--------|------------|---------------|---------|-------------|---------------|
-| **Staging** | us-east-1 | `sam-data-pipeline-staging` | 512 MB | 120s | 500 | 14 days |
-| **Production** | us-west-2 | `sam-data-pipeline-production` | 1024 MB | 300s | 1000 | 30 days |
+| **Staging** | ap-southeast-1 | `sam-data-pipeline-staging` | 512 MB | 120s | 500 | 14 days |
+| **Production** | ap-southeast-1 | `sam-data-pipeline-production` | 1024 MB | 300s | 1000 | 30 days |
 
 ## 🚀 Quick Start
 
@@ -104,7 +104,7 @@ The `samconfig.toml` defines environment-specific deployment parameters:
 ```toml
 [staging.deploy.parameters]
 stack_name = "sam-data-pipeline-staging"
-region = "us-east-1"
+region = "ap-southeast-1"
 confirm_changeset = false
 parameter_overrides = [
     "Environment=staging",
@@ -114,7 +114,7 @@ parameter_overrides = [
 
 [production.deploy.parameters]
 stack_name = "sam-data-pipeline-production"
-region = "us-west-2"
+region = "ap-southeast-1"
 confirm_changeset = true  # Requires manual confirmation
 parameter_overrides = [
     "Environment=production",
@@ -217,12 +217,12 @@ export OPENAI_API_KEY_PROD="sk-production-key-here"
 
 ```bash
 # Check stack status
-aws cloudformation describe-stacks --stack-name sam-data-pipeline-staging --region us-east-1
+aws cloudformation describe-stacks --stack-name sam-data-pipeline-staging --region ap-southeast-1
 
 # Get stack outputs
 aws cloudformation describe-stacks \
   --stack-name sam-data-pipeline-staging \
-  --region us-east-1 \
+  --region ap-southeast-1 \
   --query 'Stacks[0].Outputs' \
   --output table
 ```
@@ -233,7 +233,7 @@ aws cloudformation describe-stacks \
 # Get API URL from stack outputs
 API_URL=$(aws cloudformation describe-stacks \
   --stack-name sam-data-pipeline-staging \
-  --region us-east-1 \
+  --region ap-southeast-1 \
   --query 'Stacks[0].Outputs[?OutputKey==`ApiUrl`].OutputValue' \
   --output text)
 
@@ -248,10 +248,10 @@ curl -X POST $API_URL \
 ```bash
 # List Step Functions executions
 aws stepfunctions list-executions \
-  --state-machine-arn arn:aws:states:us-east-1:ACCOUNT:stateMachine:sam-data-pipeline-staging-IngestionStateMachine
+  --state-machine-arn arn:aws:states:ap-southeast-1:ACCOUNT:stateMachine:sam-data-pipeline-staging-IngestionStateMachine
 
 # View CloudWatch logs
-aws logs tail /aws/stepfunctions/sam-data-pipeline-staging-ingestion --region us-east-1
+aws logs tail /aws/stepfunctions/sam-data-pipeline-staging-ingestion --region ap-southeast-1
 ```
 
 ## 🔄 CI/CD Integration
@@ -300,7 +300,7 @@ jobs:
 #### 1. Template Validation Errors
 ```bash
 # Validate template before deployment
-sam validate --region us-east-1
+sam validate --region ap-southeast-1
 ```
 
 #### 2. Permission Issues
@@ -315,7 +315,7 @@ aws iam get-user
 #### 3. Stack Already Exists
 ```bash
 # If deployment fails due to existing stack
-aws cloudformation describe-stacks --stack-name sam-data-pipeline-staging --region us-east-1
+aws cloudformation describe-stacks --stack-name sam-data-pipeline-staging --region ap-southeast-1
 ```
 
 #### 4. OpenAI API Issues
@@ -331,10 +331,10 @@ If a deployment fails, SAM automatically rolls back. To manually rollback:
 
 ```bash
 # For staging
-aws cloudformation cancel-update-stack --stack-name sam-data-pipeline-staging --region us-east-1
+aws cloudformation cancel-update-stack --stack-name sam-data-pipeline-staging --region ap-southeast-1
 
 # For production  
-aws cloudformation cancel-update-stack --stack-name sam-data-pipeline-production --region us-west-2
+aws cloudformation cancel-update-stack --stack-name sam-data-pipeline-production --region ap-southeast-1
 ```
 
 ## 🔧 Advanced Configuration
@@ -377,7 +377,7 @@ IngestionApi:
   Properties:
     Domain:
       DomainName: api.yourcompany.com
-      CertificateArn: arn:aws:acm:us-west-2:ACCOUNT:certificate/CERT-ID
+      CertificateArn: arn:aws:acm:ap-southeast-1:ACCOUNT:certificate/CERT-ID
 ```
 
 ## 📈 Monitoring & Observability

@@ -20,8 +20,8 @@ show_usage() {
     echo "  test       - Test the API endpoint"
     echo ""
     echo "Environments:"
-    echo "  staging    - Staging environment (us-east-1)"
-    echo "  production - Production environment (us-west-2)"
+    echo "  staging    - Staging environment (ap-southeast-1)"
+    echo "  production - Production environment (ap-southeast-1)"
     echo ""
     echo "Examples:"
     echo "  ./scripts/manage-environments.sh status staging"
@@ -45,10 +45,10 @@ fi
 # Set environment-specific variables
 if [ "$ENVIRONMENT" = "staging" ]; then
     STACK_NAME="sam-data-pipeline-staging"
-    REGION="us-east-1"
+    REGION="ap-southeast-1"
 elif [ "$ENVIRONMENT" = "production" ]; then
     STACK_NAME="sam-data-pipeline-production"
-    REGION="us-west-2"
+    REGION="ap-southeast-1"
 fi
 
 case "$ACTION" in
