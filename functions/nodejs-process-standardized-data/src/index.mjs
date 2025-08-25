@@ -38,7 +38,6 @@ export const handler = async (event) => {
 
   // Create JSON output
   const jsonBody = JSON.stringify(enrichedRows, null, 2);
-  console.log("con co be be - checking output mapping", jsonBody);
 
   // Target S3 location with execution-specific path
   const bucket = process.env.BUCKET_NAME;

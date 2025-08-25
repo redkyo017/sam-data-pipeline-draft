@@ -50,7 +50,7 @@ Configure your AWS credentials with appropriate permissions:
 aws configure
 AWS Access Key ID [None]: YOUR_ACCESS_KEY
 AWS Secret Access Key [None]: YOUR_SECRET_KEY
-Default region name [None]: us-east-1
+Default region name [None]: ap-southeast-1
 Default output format [None]: json
 ```
 
@@ -125,7 +125,7 @@ cd ../../..
 #### Option A: Quick Deployment Script (Recommended)
 
 ```bash
-./scripts/deploy.sh dev us-east-1
+./scripts/deploy.sh dev ap-southeast-1
 ```
 
 This automated script will:
@@ -143,7 +143,7 @@ sam deploy --guided
 
 You'll be prompted for:
 - Stack name (e.g., `sam-data-pipeline-dev`)
-- AWS Region (e.g., `us-east-1`)
+- AWS Region (e.g., `ap-southeast-1`)
 - Parameters (OpenAI API key, bucket names)
 - Confirmation for resource creation
 
@@ -153,7 +153,7 @@ You'll be prompted for:
 sam build
 sam deploy \
   --stack-name sam-data-pipeline-dev \
-  --region us-east-1 \
+  --region ap-southeast-1 \
   --capabilities CAPABILITY_IAM \
   --parameter-overrides \
     OpenAIApiKey=your_openai_key \
@@ -216,7 +216,7 @@ sam local start-stepfunctions
 # In another terminal, execute state machine
 aws stepfunctions start-execution \
   --endpoint http://localhost:8083 \
-  --state-machine-arn "arn:aws:states:us-east-1:123456789012:stateMachine:IngestionStateMachine" \
+  --state-machine-arn "arn:aws:states:ap-southeast-1:123456789012:stateMachine:IngestionStateMachine" \
   --input '{"Bucket": "test-bucket", "Key": "test.csv"}'
 ```
 
@@ -245,14 +245,14 @@ Create environment-specific SAM configuration:
 [default]
 [default.deploy.parameters]
 stack_name = "sam-data-pipeline-dev"
-region = "us-east-1"
+region = "ap-southeast-1"
 capabilities = "CAPABILITY_IAM"
 parameter_overrides = "OpenAIApiKey=dev_key_here"
 
 [prod]
 [prod.deploy.parameters]
 stack_name = "sam-data-pipeline-prod"
-region = "us-west-2"
+region = "ap-southeast-1"
 capabilities = "CAPABILITY_IAM"
 parameter_overrides = "OpenAIApiKey=prod_key_here InputBucketName=prod-input-bucket OutputBucketName=prod-output-bucket"
 ```
@@ -469,7 +469,7 @@ jobs:
       - uses: actions/checkout@v2
       - uses: aws-actions/setup-sam@v1
       - name: Deploy
-        run: ./scripts/deploy.sh prod us-east-1
+        run: ./scripts/deploy.sh prod ap-southeast-1
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}

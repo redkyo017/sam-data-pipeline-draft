@@ -184,10 +184,10 @@ export const handler = async (event = {}) => {
   try {
     console.log("Event received:", JSON.stringify(event, null, 2));
     
-    // Extract executionId from the event
+    // Extract metadata from the event (passed from Step Functions state)
     const executionId = event.executionId;
-    let campaign_id = "default-campaign";
-    let commit_id = null;
+    let campaign_id = event.campaign_id || null;
+    let commit_id = event.commit_id || null;
     
     const sources = normalizeSources(event.data || event);
     if (!sources || sources.length === 0) {
@@ -224,12 +224,12 @@ export const handler = async (event = {}) => {
       try {
         const data = JSON.parse(jsonContent);
         if (Array.isArray(data)) {
-          // Extract campaign_id and commit_id from the first file's first record
+          // Extract campaign_id and commit_id from the first file's first record if not provided in event
           if (!firstFileProcessed && data.length > 0) {
-            campaign_id = data[0].campaign_id || campaign_id;
-            commit_id = data[0].commit_id || commit_id;
+            campaign_id = campaign_id || data[0].campaign_id || "unknown-campaign";
+            commit_id = commit_id || data[0].commit_id || "unknown-commit";
             firstFileProcessed = true;
-            console.log(`Extracted from first file: campaign_id=${campaign_id}, commit_id=${commit_id}`);
+            console.log(`Using campaign_id=${campaign_id}, commit_id=${commit_id}`);
           }
           
           // Transform each record to OUTPUT_DATA_STRUCTURE format
@@ -245,6 +245,10 @@ export const handler = async (event = {}) => {
       }
     }
 
+    // Ensure we have campaign_id and commit_id even if no data was processed
+    campaign_id = campaign_id || "unknown-campaign";
+    commit_id = commit_id || "unknown-commit";
+    
     // Deduplicate records based on first_name, last_name, and linkedin_url
     console.log(`Total records before deduplication: ${allData.length}`);
     const deduplicatedData = deduplicateRecords(allData);

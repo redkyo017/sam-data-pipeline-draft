@@ -209,7 +209,7 @@ sam local start-stepfunctions
 # Test execution
 aws stepfunctions start-execution \
   --endpoint http://localhost:8083 \
-  --state-machine-arn "arn:aws:states:us-east-1:123456789012:stateMachine:IngestionStateMachine" \
+  --state-machine-arn "arn:aws:states:ap-southeast-1:123456789012:stateMachine:IngestionStateMachine" \
   --input '{"body": "{\"Bucket\": \"test-bucket\", \"Key\": \"test.csv\"}"}'
 ```
 
