@@ -2,6 +2,9 @@
 
 # Quick deployment script for STAGING environment
 # Usage: ./scripts/deploy-staging.sh [openai-api-key]
+# 
+# Prerequisites:
+# - For enrichment pipeline: Set up Parameter Store keys (see docs/ENRICHMENT-SETUP.md)
 
 set -e
 

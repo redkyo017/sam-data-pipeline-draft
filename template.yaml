@@ -157,6 +157,64 @@ Resources:
         Type: SQS
         TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
 
+  EnrichmentProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/nodejs-enrichment-processor/
+      Handler: src/index.handler
+      Description: 'Enriches contact data with RocketReach and Apollo.io APIs'
+      MemorySize: 512
+      Timeout: 300
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - S3WritePolicy:
+            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+              Resource: 
+                - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/enrichment/rocketreach-api-key"
+                - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/enrichment/apollo-api-key"
+      Environment:
+        Variables:
+          ROCKETREACH_API_KEY_PARAM: /enrichment/rocketreach-api-key
+          APOLLO_API_KEY_PARAM: /enrichment/apollo-api-key
+          BUCKET_NAME: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
+  EnrichmentMergerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/nodejs-enrichment-merger/
+      Handler: src/index.handler
+      Description: 'Merges individual enriched contact JSON files from distributed map execution'
+      MemorySize: 512
+      Timeout: 300
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - S3WritePolicy:
+            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+                - s3:DeleteObject
+                - s3:ListBucket
+              Resource: 
+                - !Sub "arn:aws:s3:::${OutputBucketBaseName}-${Environment}-${AWS::AccountId}/*"
+                - !Sub "arn:aws:s3:::${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+      Environment:
+        Variables:
+          BUCKET_NAME: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
+
   IngestionStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
@@ -205,11 +263,50 @@ Resources:
             Method: post
             RestApiId: !Ref IngestionApi
 
+  EnrichmentStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachine/enrichment_pipeline.asl.json
+      DefinitionSubstitutions:
+        EnrichmentProcessorFunctionArn: !GetAtt EnrichmentProcessorFunction.Arn
+        EnrichmentMergerFunctionArn: !GetAtt EnrichmentMergerFunction.Arn
+        BatchFailureQueueUrl: !Ref BatchFailureQueue
+        MaxConcurrency: !FindInMap [EnvironmentMap, !Ref Environment, StepFunctionsConcurrency]
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref EnrichmentProcessorFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref EnrichmentMergerFunction
+        - S3ReadPolicy:
+            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - S3WritePolicy:
+            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - S3CrudPolicy:
+            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - S3CrudPolicy:
+            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+              Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:*"
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt BatchFailureQueue.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /pipelines/enrichment/executions
+            Method: post
+            RestApiId: !Ref IngestionApi
+
   IngestionApi:
     Type: AWS::Serverless::Api
     Properties:
       StageName: !Ref Environment
-      Description: 'API Gateway for triggering the ingestion pipeline'
+      Description: 'API Gateway for triggering data processing pipelines'
       Cors:
         AllowMethods: "'GET,POST,OPTIONS'"
         AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
@@ -241,10 +338,22 @@ Outputs:
       Name: !Sub "${AWS::StackName}-StateMachineArn"
   
   ApiUrl:
-    Description: "The URL of the API Gateway endpoint"
+    Description: "The URL of the ingestion API Gateway endpoint"
     Value: !Sub "https://${IngestionApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/pipelines/ingestion/executions"
     Export:
       Name: !Sub "${AWS::StackName}-ApiUrl"
+  
+  EnrichmentStateMachineArn:
+    Description: "The ARN of the enrichment state machine"
+    Value: !Ref EnrichmentStateMachine
+    Export:
+      Name: !Sub "${AWS::StackName}-EnrichmentStateMachineArn"
+  
+  EnrichmentApiUrl:
+    Description: "The URL of the enrichment API Gateway endpoint"
+    Value: !Sub "https://${IngestionApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/pipelines/enrichment/executions"
+    Export:
+      Name: !Sub "${AWS::StackName}-EnrichmentApiUrl"
   
   InputBucketName:
     Description: "Name of the S3 input bucket"
