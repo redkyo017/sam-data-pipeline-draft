@@ -9,14 +9,18 @@
                 "commit_id.$": "States.UUID()"
             },
             "Parameters": {
-                "Bucket.$": "$.Bucket",
-                "Key.$": "$.Key",
+                "Bucket.$": "$.bucket",
+                "Key.$": "$.key",
                 "campaign_id.$": "$.campaign_id"
             },
             "Next": "S3 CSV file Ingestion"
         },
         "S3 CSV file Ingestion": {
             "Type": "Map",
+            "Assign": {
+                "campaign_id.$": "$campaign_id",
+                "commit_id.$": "$commit_id"
+            },
             "ItemSelector": {
                 "items.$": "$$.Map.Item.Value",
                 "commit_id.$": "$commit_id",
@@ -60,7 +64,7 @@
                     "Mapping to output format": {
                         "Type": "Task",
                         "Resource": "arn:aws:states:::lambda:invoke",
-                        "ResultPath": "$.mapping",
+                        "ResultPath": "$.standardization",
                         "Parameters": {
                             "FunctionName": "${MappingRawValidInputFunctionArn}",
                             "Payload.$": "$"
@@ -175,7 +179,9 @@
                     "timestamp.$": "$$.State.EnteredTime",
                     "type": "EXECUTION_SUMMARY"
                 },
-                "originalData.$": "$"
+                "originalData.$": "$",
+                "campaign_id.$": "$campaign_id",
+                "commit_id.$": "$commit_id"
             },
             "Next": "Send Execution Summary"
         },
@@ -191,7 +197,11 @@
         },
         "Restore Data for Merge": {
             "Type": "Pass",
-            "InputPath": "$.originalData",
+            "Parameters": {
+                "data.$": "$.originalData",
+                "campaign_id.$": "$campaign_id",
+                "commit_id.$": "$commit_id"
+            },
             "Next": "Merge CSV Data"
         },
         "Merge CSV Data": {
@@ -200,8 +210,10 @@
             "Parameters": {
                 "FunctionName": "${MergeCsvDataFunctionArn}",
                 "Payload": {
-                    "data.$": "$",
-                    "executionId.$": "$$.Execution.Name"
+                    "data.$": "$.data",
+                    "executionId.$": "$$.Execution.Name",
+                    "campaign_id.$": "$campaign_id",
+                    "commit_id.$": "$commit_id"
                 }
             },
             "End": true

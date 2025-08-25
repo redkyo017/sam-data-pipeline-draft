@@ -39,13 +39,20 @@ The pipeline consists of:
 
 2. **Deploy the application:**
    ```bash
-   ./scripts/deploy.sh dev ap-southeast-1
+   # Deploy to development environment
+   ./scripts/deploy.sh dev
+   
+   # Deploy to staging environment  
+   ./scripts/deploy.sh staging
+   
+   # Deploy to production environment
+   ./scripts/deploy.sh production
    ```
    
    Or manually:
    ```bash
    sam build
-   sam deploy --guided
+   sam deploy --config-env dev  # or staging/production
    ```
 
 3. **Test the pipeline:**
@@ -54,9 +61,9 @@ The pipeline consists of:
    aws s3 cp sample-data.csv s3://your-input-bucket/
    
    # Or trigger via API Gateway
-   curl -X POST https://your-api-id.execute-api.ap-southeast-1.amazonaws.com/prod/pipelines/ingestion/executions \
+   curl -X POST https://your-api-id.execute-api.ap-southeast-1.amazonaws.com/dev/pipelines/ingestion/executions \
      -H "Content-Type: application/json" \
-     -d '{"Bucket": "your-input-bucket", "Key": "sample-data.csv"}'
+     -d '{"Bucket": "your-input-bucket", "Key": "sample-data.csv", "campaign_id": "test-campaign"}'
    ```
 
 ## 📁 Project Structure
@@ -109,11 +116,62 @@ functions/function-name/
 sam build
 
 # Deploy to specific environment
-./scripts/deploy.sh prod ap-southeast-1
+./scripts/deploy.sh dev    # or staging/production
 
 # Validate template
 sam validate
 ```
+
+## 🌍 Multi-Environment Deployment
+
+This project supports deployment to multiple environments with different resource configurations:
+
+### Environment Tiers
+
+| Environment | Memory | Timeout | Log Retention | Concurrency | Use Case |
+|-------------|--------|---------|---------------|-------------|----------|
+| **dev** | 256MB | 60s | 7 days | 100 | Development and testing |
+| **staging** | 512MB | 120s | 14 days | 500 | Pre-production validation |  
+| **production** | 1024MB | 300s | 30 days | 1000 | Live production workloads |
+
+### Deployment Commands
+
+```bash
+# Deploy to development
+./scripts/deploy.sh dev
+
+# Deploy to staging
+./scripts/deploy.sh staging
+
+# Deploy to production (requires confirmation)
+./scripts/deploy.sh production
+```
+
+### Environment Cleanup
+
+```bash
+# Clean up development environment
+./scripts/cleanup.sh dev
+
+# Clean up staging environment  
+./scripts/cleanup.sh staging
+
+# Clean up production (requires typing "DELETE")
+./scripts/cleanup.sh production
+
+# manual clean up examples:
+aws cloudformation delete-stack --stack-name sam-data-pipeline-staging --region ap-southeast-1
+aws cloudformation wait stack-delete-complete --stack-name sam-data-pipeline-staging --region ap-southeast-1
+```
+
+### Resource Naming
+
+Resources are automatically named with environment suffixes:
+- **Stack**: `sam-data-pipeline-{environment}`
+- **Buckets**: `{basename}-{environment}-{account-id}`
+- **API Stage**: `{environment}`
+
+Example: Dev environment creates `data-pipeline-input-dev-123456789012`
 
 ## 🔧 Configuration
 
@@ -130,12 +188,13 @@ sam validate
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `OpenAIApiKey` | OpenAI API key | Required |
-| `InputBucketName` | Input S3 bucket name | `sam-data-pipeline-input-bucket` |
-| `OutputBucketName` | Output S3 bucket name | `sam-data-pipeline-output-bucket` |
+| `Environment` | Deployment environment | `dev` |
+| `InputBucketBaseName` | Base name for input S3 bucket | `data-pipeline-input` |
+| `OutputBucketBaseName` | Base name for output S3 bucket | `data-pipeline-output` |
 
 ## 📊 Monitoring
 
-- **CloudWatch Logs**: Function execution logs with 30-day retention
+- **CloudWatch Logs**: Function execution logs (retention varies by environment)
 - **X-Ray Tracing**: Distributed tracing enabled for all functions
 - **Dead Letter Queue**: Failed executions sent to SQS for analysis
 - **Step Functions Console**: Visual execution monitoring
@@ -156,7 +215,8 @@ sam validate
 ```json
 {
   "Bucket": "input-bucket-name",
-  "Key": "path/to/data.csv"
+  "Key": "path/to/data.csv",
+  "campaign_id": "your-campaign-id"
 }
 ```
 

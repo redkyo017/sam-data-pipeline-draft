@@ -16,14 +16,14 @@ Parameters:
     Type: String
     Description: The API key for the OpenAI service.
     NoEcho: true
-  InputBucketName:
+  InputBucketBaseName:
     Type: String
-    Description: The name of the S3 bucket for input data.
-    Default: sam-data-pipeline-input-bucket
-  OutputBucketName:
+    Description: Base name for the S3 input bucket (will be suffixed with environment)
+    Default: data-pipeline-input
+  OutputBucketBaseName:
     Type: String
-    Description: The name of the S3 bucket for output data.
-    Default: sam-data-pipeline-output-bucket
+    Description: Base name for the S3 output bucket (will be suffixed with environment)
+    Default: data-pipeline-output
 
 Mappings:
   EnvironmentMap:
@@ -62,12 +62,12 @@ Resources:
   InputBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Ref InputBucketName
+      BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
 
   OutputBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Ref OutputBucketName
+      BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
 
   ValidateRawValidFormatFunction:
     Type: AWS::Serverless::Function
@@ -77,7 +77,7 @@ Resources:
       Description: 'Validates CSV input format against expected schema'
       Policies:
         - S3ReadPolicy:
-            BucketName: !Ref InputBucketName
+            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
@@ -92,9 +92,9 @@ Resources:
       Timeout: 300
       Policies:
         - S3ReadPolicy:
-            BucketName: !Ref InputBucketName
+            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
         - S3WritePolicy:
-            BucketName: !Ref OutputBucketName
+            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
         - Statement:
             - Effect: Allow
               Action:
@@ -108,7 +108,7 @@ Resources:
               Resource: "arn:aws:s3:::*"
       Environment:
         Variables:
-          OUTPUT_BUCKET: !Ref OutputBucketName
+          OUTPUT_BUCKET: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
@@ -123,7 +123,7 @@ Resources:
       Timeout: 300
       Policies:
         - S3ReadPolicy:
-            BucketName: !Ref InputBucketName
+            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
       Environment:
         Variables:
           OPENAI_API_KEY: !Ref OpenAIApiKey
@@ -149,10 +149,10 @@ Resources:
       Description: 'Final processing and storage of standardized data'
       Policies:
         - S3WritePolicy:
-            BucketName: !Ref OutputBucketName
+            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
       Environment:
         Variables:
-          BUCKET_NAME: !Ref OutputBucketName
+          BUCKET_NAME: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
@@ -181,11 +181,13 @@ Resources:
         - LambdaInvokePolicy:
             FunctionName: !Ref ProcessStandardizedDataFunction
         - S3ReadPolicy:
-            BucketName: !Ref InputBucketName
+            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
         - S3WritePolicy:
-            BucketName: !Ref OutputBucketName
+            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
         - S3CrudPolicy:
-            BucketName: !Ref InputBucketName
+            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - S3CrudPolicy:
+            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
         - Statement:
             - Effect: Allow
               Action:
@@ -206,7 +208,7 @@ Resources:
   IngestionApi:
     Type: AWS::Serverless::Api
     Properties:
-      StageName: prod
+      StageName: !Ref Environment
       Description: 'API Gateway for triggering the ingestion pipeline'
       Cors:
         AllowMethods: "'GET,POST,OPTIONS'"
@@ -240,7 +242,7 @@ Outputs:
   
   ApiUrl:
     Description: "The URL of the API Gateway endpoint"
-    Value: !Sub "https://${IngestionApi}.execute-api.${AWS::Region}.amazonaws.com/prod/pipelines/ingestion/executions"
+    Value: !Sub "https://${IngestionApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/pipelines/ingestion/executions"
     Export:
       Name: !Sub "${AWS::StackName}-ApiUrl"
   

@@ -7,26 +7,6 @@ const openai = new OpenAI({
 });
 
 // Target data structure schema
-// const userInfoSchema = {
-//     type: "object",
-//     properties: {
-//         first_name: { type: "string" },
-//         last_name: { type: "string" },
-//         email: { type: "string" },
-//         phone: { type: "string" },
-//         address1: { type: "string" },
-//         address2: { type: "string" },
-//         city: { type: "string" },
-//         state: { type: "string" },
-//         zip_code: { type: "string" },
-//         company_name: { type: "string" },
-//         job_title: { type: "string" },
-//         country: { type: "string" },
-//         linked_in_url: { type: "string" },
-//     },
-//     required: ["first_name", "last_name", "email", "phone", "address1", "address2", "city", "state", "zip_code", "company_name", "job_title", "country" ,"linked_in_url"],
-//     additionalProperties: false,
-//   };
 const TARGET_SCHEMA = {
     first_name: "",
     last_name: "",
@@ -124,7 +104,6 @@ async function standardizeWithOpenAI(csvData) {
 
         const responseContent = response.choices[0].message.content;
         // const responseContent = response.output_text;
-        console.log("con co be be", responseContent)
         
         // Parse the JSON response
         let standardizedRecords;

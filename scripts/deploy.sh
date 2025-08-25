@@ -6,14 +6,22 @@
 
 set -e
 
+# Load environment variables from .env file if it exists
+if [ -f .env ]; then
+    echo "🔧 Loading environment variables from .env file..."
+    set -a  # Automatically export all variables
+    source .env
+    set +a  # Stop automatically exporting
+fi
+
 # Configuration
 ENVIRONMENT=${1:-staging}
-OPENAI_API_KEY=${2}
+OPENAI_API_KEY=${2:-$OPENAI_API_KEY}
 
 # Validate environment
-if [[ ! "$ENVIRONMENT" =~ ^(staging|production)$ ]]; then
+if [[ ! "$ENVIRONMENT" =~ ^(dev|staging|production)$ ]]; then
     echo "❌ Error: Invalid environment '$ENVIRONMENT'"
-    echo "Valid environments: staging, production"
+    echo "Valid environments: dev, staging, production"
     echo "Usage: ./scripts/deploy.sh [environment] [openai-api-key]"
     exit 1
 fi
@@ -24,13 +32,20 @@ if [ -z "$OPENAI_API_KEY" ]; then
     echo "Usage: ./scripts/deploy.sh [environment] [openai-api-key]"
     echo ""
     echo "Examples:"
+    echo "  ./scripts/deploy.sh dev \$OPENAI_API_KEY"
     echo "  ./scripts/deploy.sh staging \$OPENAI_API_KEY"
     echo "  ./scripts/deploy.sh production \$OPENAI_API_KEY_PROD"
+    echo "  ./scripts/deploy.sh dev  # Uses OPENAI_API_KEY from .env"
+    echo ""
+    echo "💡 Tip: Set OPENAI_API_KEY in .env file to avoid passing it as parameter"
     exit 1
 fi
 
 # Environment-specific configurations (from samconfig.toml)
-if [ "$ENVIRONMENT" = "staging" ]; then
+if [ "$ENVIRONMENT" = "dev" ]; then
+    STACK_NAME="sam-data-pipeline-dev"
+    REGION="ap-southeast-1"
+elif [ "$ENVIRONMENT" = "staging" ]; then
     STACK_NAME="sam-data-pipeline-staging"
     REGION="ap-southeast-1"
 elif [ "$ENVIRONMENT" = "production" ]; then
@@ -43,6 +58,8 @@ echo "🚀 Deploying SAM Data Pipeline"
 echo "   Environment: ${ENVIRONMENT}"
 echo "   Region: ${REGION}"
 echo "   Stack: ${STACK_NAME}"
+echo "   Input Bucket Base: ${INPUT_BUCKET_BASE_NAME:-data-pipeline-input}"
+echo "   Output Bucket Base: ${OUTPUT_BUCKET_BASE_NAME:-data-pipeline-output}"
 echo ""
 
 # Pre-deployment validations
@@ -91,7 +108,10 @@ fi
 sam deploy \
     --config-env ${ENVIRONMENT} \
     --parameter-overrides \
-        OpenAIApiKey=${OPENAI_API_KEY}
+        Environment=${ENVIRONMENT} \
+        OpenAIApiKey=${OPENAI_API_KEY} \
+        InputBucketBaseName=${INPUT_BUCKET_BASE_NAME:-data-pipeline-input} \
+        OutputBucketBaseName=${OUTPUT_BUCKET_BASE_NAME:-data-pipeline-output}
 
 # Post-deployment actions
 echo ""
