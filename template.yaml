@@ -277,7 +277,7 @@ Resources:
       Environment:
         Variables:
           INGESTION_STATE_MACHINE_ARN: !Ref IngestionStateMachine
-          # ENRICHMENT_STATE_MACHINE_ARN: !Ref EnrichmentStateMachine # Add when enrichment is implemented
+          ENRICHMENT_STATE_MACHINE_ARN: !Ref EnrichmentStateMachine
       Policies:
         - Statement:
             - Effect: Allow
@@ -285,7 +285,7 @@ Resources:
                 - states:StartExecution
               Resource: 
                 - !Ref IngestionStateMachine
-                # - !Ref EnrichmentStateMachine # Add when enrichment is implemented
+                - !Ref EnrichmentStateMachine
       Events:
         IngestionApiEvent:
           Type: Api
@@ -325,13 +325,13 @@ Resources:
               Action:
                 - sqs:SendMessage
               Resource: !GetAtt BatchFailureQueue.Arn
-      Events:
-        ApiEvent:
-          Type: Api
-          Properties:
-            Path: /pipelines/enrichment/executions
-            Method: post
-            RestApiId: !Ref IngestionApi
+      # Events:
+      #   ApiEvent:
+      #     Type: Api
+      #     Properties:
+      #       Path: /pipelines/enrichment/executions
+      #       Method: post
+      #       RestApiId: !Ref IngestionApi
 
   IngestionApi:
     Type: AWS::Serverless::Api

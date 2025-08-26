@@ -54,13 +54,18 @@
                         "Type": "Pass",
                         "Parameters": {
                             "failureMessage": {
-                                "executionId.$": "$$.Execution.Name",
+                                "execution_id.$": "$$.Execution.Name",
                                 "campaign_id.$": "$.Items[0].campaign_id",
-                                "commit_id.$": "$.Items[0].commit_id",
-                                "failedBatchSize.$": "States.ArrayLength($.Items)",
-                                "error.$": "$.error.Cause",
+                                "commit_id.$": "$.Items[0].commit_id", 
                                 "timestamp.$": "$$.State.EnteredTime",
-                                "batchIndex.$": "$$.Map.Item.Index"
+                                "current.$": "States.ArrayLength($.Items)",
+                                "total": -1,
+                                "status": "failed",
+                                "pipeline": "enrichment",
+                                "error": {
+                                    "cause.$": "$.error.Cause",
+                                    "error.$": "$.error.Error"
+                                }
                             }
                         },
                         "Next": "Send Batch Failure to SQS"
@@ -107,11 +112,18 @@
             "Type": "Pass",
             "Parameters": {
                 "summaryMessage": {
-                    "executionId.$": "$$.Execution.Name",
-                    "totalBatches.$": "States.ArrayLength($)",
-                    "successfulBatches.$": "States.ArrayLength($)",
+                    "execution_id.$": "$$.Execution.Name",
+                    "campaign_id.$": "$campaign_id",
+                    "commit_id.$": "$commit_id",
                     "timestamp.$": "$$.State.EnteredTime",
-                    "type": "ENRICHMENT_EXECUTION_SUMMARY"
+                    "current.$": "States.ArrayLength($)",
+                    "total.$": "States.ArrayLength($)",
+                    "status": "completed",
+                    "pipeline": "enrichment",
+                    "metadata": {
+                        "type": "EXECUTION_SUMMARY",
+                        "totalBatches.$": "States.ArrayLength($)"
+                    }
                 },
                 "originalData.$": "$",
                 "campaign_id.$": "$campaign_id",
@@ -163,12 +175,22 @@
             "Type": "Pass",
             "Parameters": {
                 "failureMessage": {
-                    "executionId.$": "$$.Execution.Name",
+                    "execution_id.$": "$$.Execution.Name",
                     "campaign_id.$": "$.campaign_id",
                     "commit_id.$": "$.commit_id",
-                    "error.$": "$.mergeError.Cause",
                     "timestamp.$": "$$.State.EnteredTime",
-                    "type": "ENRICHMENT_MERGE_FAILURE"
+                    "current": -1,
+                    "total": -1,
+                    "status": "failed",
+                    "pipeline": "enrichment",
+                    "error": {
+                        "cause.$": "$.mergeError.Cause",
+                        "error.$": "$.mergeError.Error"
+                    },
+                    "metadata": {
+                        "type": "MERGE_FAILURE",
+                        "stage": "post-enrichment"
+                    }
                 }
             },
             "Next": "Send Merge Failure to SQS"
