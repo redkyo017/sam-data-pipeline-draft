@@ -92,7 +92,7 @@
             "ToleratedFailurePercentage": 100,
             "ToleratedFailureCount": 10000,
             "ItemBatcher": {
-                "MaxItemsPerBatch": 15
+                "MaxItemsPerBatch": 100
             },
             "Next": "Prepare Execution Summary",
             "Catch": [

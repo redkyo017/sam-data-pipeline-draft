@@ -16,6 +16,16 @@ Parameters:
     Type: String
     Description: The API key for the OpenAI service.
     NoEcho: true
+  RocketReachApiKey:
+    Type: String
+    Description: The API key for the RocketReach service.
+    Default: ""
+    NoEcho: true
+  ApolloApiKey:
+    Type: String
+    Description: The API key for the Apollo.io service.
+    Default: ""
+    NoEcho: true
   InputBucketBaseName:
     Type: String
     Description: Base name for the S3 input bucket (will be suffixed with environment)
@@ -181,6 +191,8 @@ Resources:
         Variables:
           ROCKETREACH_API_KEY_PARAM: /enrichment/rocketreach-api-key
           APOLLO_API_KEY_PARAM: /enrichment/apollo-api-key
+          ROCKETREACH_API_KEY: !Ref RocketReachApiKey
+          APOLLO_API_KEY: !Ref ApolloApiKey
           BUCKET_NAME: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
       DeadLetterQueue:
         Type: SQS

@@ -17,52 +17,122 @@ const RETRY_CONFIG = {
 };
 
 /**
- * Search for contact information using RocketReach API
+ * Search for contact information using RocketReach API (single contact - legacy)
  * @param {Object} contact - Contact object with name, company, etc.
  * @param {string} apiKey - RocketReach API key
  * @param {string} requestId - Request ID for logging correlation
  * @returns {Promise<Object>} - Enriched contact data or null
  */
 export async function searchContact(contact, apiKey, requestId) {
+    const results = await searchContacts([contact], apiKey, requestId);
+    return results && results.length > 0 ? results[0] : null;
+}
+
+/**
+ * Bulk search for contact information using RocketReach API
+ * @param {Array} contacts - Array of contact objects with name, company, etc.
+ * @param {string} apiKey - RocketReach API key
+ * @param {string} requestId - Request ID for logging correlation
+ * @returns {Promise<Array>} - Array of enriched contact data (same order as input)
+ */
+export async function searchContacts(contacts, apiKey, requestId) {
     if (!apiKey) {
         console.error(`[${requestId}] RocketReach API key not provided`);
-        return null;
+        return contacts.map(() => null);
     }
     
-    if (!contact.first_name || !contact.last_name) {
-        console.warn(`[${requestId}] Insufficient data for RocketReach search: missing name`);
-        return null;
+    if (!contacts || contacts.length === 0) {
+        return [];
     }
     
+    // RocketReach supports up to 100 contacts per bulk request
+    const MAX_BATCH_SIZE = 100;
+    const results = [];
+    
+    try {
+        // Process contacts in batches of 100
+        for (let i = 0; i < contacts.length; i += MAX_BATCH_SIZE) {
+            const batch = contacts.slice(i, i + MAX_BATCH_SIZE);
+            console.log(`[${requestId}] Processing RocketReach batch ${Math.floor(i/MAX_BATCH_SIZE) + 1}: ${batch.length} contacts`);
+            
+            const batchResults = await processBatch(batch, apiKey, requestId);
+            results.push(...batchResults);
+        }
+        
+        return results;
+        
+    } catch (error) {
+        console.error(`[${requestId}] RocketReach bulk API error:`, error.message);
+        return contacts.map(() => null);
+    }
+}
+
+/**
+ * Process a batch of contacts using RocketReach bulk API
+ * @param {Array} batch - Batch of contacts to process
+ * @param {string} apiKey - RocketReach API key
+ * @param {string} requestId - Request ID for logging
+ * @returns {Promise<Array>} - Array of enriched contact data
+ */
+async function processBatch(batch, apiKey, requestId) {
     try {
         // Apply rate limiting
         await applyRateLimit();
         
-        // Build search query
-        const searchQuery = buildSearchQuery(contact);
-        console.log(`[${requestId}] RocketReach search query:`, searchQuery);
+        // Build bulk search queries
+        const queries = batch.map((contact, index) => {
+            if (!contact.first_name || !contact.last_name) {
+                console.warn(`[${requestId}] Insufficient data for RocketReach search at index ${index}: missing name`);
+                return null;
+            }
+            return buildSearchQuery(contact, index);
+        });
         
-        // Perform API call with retry logic
-        const result = await performApiCallWithRetry(searchQuery, apiKey, requestId);
+        // Filter out null queries but keep track of original indices
+        const validQueries = [];
+        const queryIndexMap = new Map(); // Maps valid query index to original batch index
         
-        if (result && result.profiles && result.profiles.length > 0) {
-            const profile = result.profiles[0]; // Take the first match
-            const enrichmentData = extractEnrichmentData(profile, requestId);
-            
-            console.log(`[${requestId}] RocketReach enrichment found:`, {
-                emails: enrichmentData.emails.length,
-                phones: enrichmentData.phones.length
-            });
-            
-            return enrichmentData;
-        } else {
-            console.log(`[${requestId}] No RocketReach results found for ${contact.first_name} ${contact.last_name}`);
-            return null;
+        queries.forEach((query, originalIndex) => {
+            if (query) {
+                queryIndexMap.set(validQueries.length, originalIndex);
+                validQueries.push(query);
+            }
+        });
+        
+        if (validQueries.length === 0) {
+            console.warn(`[${requestId}] No valid contacts for RocketReach bulk search`);
+            return batch.map(() => null);
         }
         
+        console.log(`[${requestId}] RocketReach bulk search: ${validQueries.length} valid queries`);
+        
+        // Perform bulk API call
+        const bulkResult = await performBulkApiCallWithRetry(validQueries, apiKey, requestId);
+        
+        // Initialize results array with nulls
+        const results = new Array(batch.length).fill(null);
+        
+        // Process bulk results and map back to original positions
+        if (bulkResult && bulkResult.profiles && Array.isArray(bulkResult.profiles)) {
+            bulkResult.profiles.forEach((profileData, queryIndex) => {
+                const originalIndex = queryIndexMap.get(queryIndex);
+                if (originalIndex !== undefined && profileData && profileData.profiles && profileData.profiles.length > 0) {
+                    const profile = profileData.profiles[0]; // Take the first match
+                    const enrichmentData = extractEnrichmentData(profile, requestId, originalIndex);
+                    results[originalIndex] = enrichmentData;
+                }
+            });
+        }
+        
+        // Log batch results
+        const successCount = results.filter(r => r !== null).length;
+        console.log(`[${requestId}] RocketReach batch completed: ${successCount}/${batch.length} contacts enriched`);
+        
+        return results;
+        
     } catch (error) {
-        console.error(`[${requestId}] RocketReach API error:`, error.message);
-        return null;
+        console.error(`[${requestId}] RocketReach batch processing error:`, error.message);
+        return batch.map(() => null);
     }
 }
 
@@ -98,9 +168,10 @@ async function applyRateLimit() {
 /**
  * Build search query for RocketReach API
  * @param {Object} contact - Contact information
+ * @param {number} index - Index for bulk queries (optional)
  * @returns {Object} - API search query
  */
-function buildSearchQuery(contact) {
+function buildSearchQuery(contact, index = null) {
     const query = {
         name: `${contact.first_name} ${contact.last_name}`.trim()
     };
@@ -198,12 +269,88 @@ async function performApiCallWithRetry(query, apiKey, requestId) {
 }
 
 /**
+ * Perform RocketReach bulk API call with retry logic
+ * @param {Array} queries - Array of search queries
+ * @param {string} apiKey - API key
+ * @param {string} requestId - Request ID for logging
+ * @returns {Promise<Object>} - Bulk API response
+ */
+async function performBulkApiCallWithRetry(queries, apiKey, requestId) {
+    let lastError;
+    
+    for (let attempt = 0; attempt <= RETRY_CONFIG.maxRetries; attempt++) {
+        try {
+            if (attempt > 0) {
+                const delay = Math.min(
+                    RETRY_CONFIG.baseDelayMs * Math.pow(2, attempt - 1),
+                    RETRY_CONFIG.maxDelayMs
+                );
+                console.log(`[${requestId}] RocketReach bulk retry attempt ${attempt} after ${delay}ms`);
+                await sleep(delay);
+            }
+            
+            // RocketReach bulk person lookup endpoint
+            const response = await fetch('https://api.rocketreach.co/api/v2/bulkLookup', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Api-Key': apiKey
+                },
+                body: JSON.stringify({
+                    queries: queries
+                })
+            });
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                
+                // Handle rate limiting (429) specifically
+                if (response.status === 429) {
+                    const retryAfter = response.headers.get('retry-after');
+                    const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : 2000;
+                    console.warn(`[${requestId}] RocketReach bulk rate limited, waiting ${waitTime}ms`);
+                    await sleep(waitTime);
+                    continue; // Don't count as a retry attempt for rate limiting
+                }
+                
+                // Handle server errors (5xx) - these should be retried
+                if (response.status >= 500) {
+                    throw new Error(`Server error: ${response.status} - ${errorText}`);
+                }
+                
+                // Client errors (4xx) - don't retry these
+                if (response.status >= 400) {
+                    console.warn(`[${requestId}] RocketReach bulk client error: ${response.status} - ${errorText}`);
+                    return null;
+                }
+            }
+            
+            const result = await response.json();
+            console.log(`[${requestId}] RocketReach bulk API call successful - ${queries.length} queries processed`);
+            return result;
+            
+        } catch (error) {
+            lastError = error;
+            console.error(`[${requestId}] RocketReach bulk API attempt ${attempt + 1} failed:`, error.message);
+            
+            // Don't retry for network/parsing errors on the last attempt
+            if (attempt === RETRY_CONFIG.maxRetries) {
+                break;
+            }
+        }
+    }
+    
+    throw new Error(`RocketReach bulk API failed after ${RETRY_CONFIG.maxRetries + 1} attempts. Last error: ${lastError.message}`);
+}
+
+/**
  * Extract enrichment data from RocketReach profile
  * @param {Object} profile - RocketReach profile data
  * @param {string} requestId - Request ID for logging
+ * @param {number} contactIndex - Contact index for bulk operations (optional)
  * @returns {Object} - Extracted emails and phones
  */
-function extractEnrichmentData(profile, requestId) {
+function extractEnrichmentData(profile, requestId, contactIndex = null) {
     const enrichmentData = {
         emails: [],
         phones: []
@@ -239,7 +386,8 @@ function extractEnrichmentData(profile, requestId) {
         }
         
         // Log extraction results
-        console.log(`[${requestId}] Extracted from RocketReach: ${enrichmentData.emails.length} emails, ${enrichmentData.phones.length} phones`);
+        const indexStr = contactIndex !== null ? ` (contact ${contactIndex})` : '';
+        console.log(`[${requestId}] Extracted from RocketReach${indexStr}: ${enrichmentData.emails.length} emails, ${enrichmentData.phones.length} phones`);
         
     } catch (error) {
         console.error(`[${requestId}] Error extracting RocketReach data:`, error.message);

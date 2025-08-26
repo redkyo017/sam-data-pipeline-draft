@@ -17,52 +17,121 @@ const RETRY_CONFIG = {
 };
 
 /**
- * Search for contact information using Apollo.io API
+ * Search for contact information using Apollo.io API (single contact - legacy)
  * @param {Object} contact - Contact object with name, company, etc.
  * @param {string} apiKey - Apollo.io API key
  * @param {string} requestId - Request ID for logging correlation
  * @returns {Promise<Object>} - Enriched contact data or null
  */
 export async function searchContact(contact, apiKey, requestId) {
+    const results = await searchContacts([contact], apiKey, requestId);
+    return results && results.length > 0 ? results[0] : null;
+}
+
+/**
+ * Bulk search for contact information using Apollo.io API
+ * @param {Array} contacts - Array of contact objects with name, company, etc.
+ * @param {string} apiKey - Apollo.io API key
+ * @param {string} requestId - Request ID for logging correlation
+ * @returns {Promise<Array>} - Array of enriched contact data (same order as input)
+ */
+export async function searchContacts(contacts, apiKey, requestId) {
     if (!apiKey) {
         console.error(`[${requestId}] Apollo.io API key not provided`);
-        return null;
+        return contacts.map(() => null);
     }
     
-    if (!contact.first_name || !contact.last_name) {
-        console.warn(`[${requestId}] Insufficient data for Apollo.io search: missing name`);
-        return null;
+    if (!contacts || contacts.length === 0) {
+        return [];
     }
     
+    // Apollo.io supports up to 10 contacts per bulk request
+    const MAX_BATCH_SIZE = 10;
+    const results = [];
+    
+    try {
+        // Process contacts in batches of 10
+        for (let i = 0; i < contacts.length; i += MAX_BATCH_SIZE) {
+            const batch = contacts.slice(i, i + MAX_BATCH_SIZE);
+            console.log(`[${requestId}] Processing Apollo.io batch ${Math.floor(i/MAX_BATCH_SIZE) + 1}: ${batch.length} contacts`);
+            
+            const batchResults = await processBatch(batch, apiKey, requestId);
+            results.push(...batchResults);
+        }
+        
+        return results;
+        
+    } catch (error) {
+        console.error(`[${requestId}] Apollo.io bulk API error:`, error.message);
+        return contacts.map(() => null);
+    }
+}
+
+/**
+ * Process a batch of contacts using Apollo.io bulk API
+ * @param {Array} batch - Batch of contacts to process
+ * @param {string} apiKey - Apollo.io API key
+ * @param {string} requestId - Request ID for logging
+ * @returns {Promise<Array>} - Array of enriched contact data
+ */
+async function processBatch(batch, apiKey, requestId) {
     try {
         // Apply rate limiting
         await applyRateLimit();
         
-        // Build search query
-        const searchQuery = buildSearchQuery(contact);
-        console.log(`[${requestId}] Apollo.io search query:`, searchQuery);
+        // Build bulk enrichment requests
+        const enrichmentRequests = batch.map((contact, index) => {
+            if (!contact.first_name || !contact.last_name) {
+                console.warn(`[${requestId}] Insufficient data for Apollo.io search at index ${index}: missing name`);
+                return null;
+            }
+            return buildEnrichmentRequest(contact, index);
+        });
         
-        // Perform API call with retry logic
-        const result = await performApiCallWithRetry(searchQuery, apiKey, requestId);
+        // Filter out null requests but keep track of original indices
+        const validRequests = [];
+        const requestIndexMap = new Map(); // Maps valid request index to original batch index
         
-        if (result && result.people && result.people.length > 0) {
-            const person = result.people[0]; // Take the first match
-            const enrichmentData = extractEnrichmentData(person, requestId);
-            
-            console.log(`[${requestId}] Apollo.io enrichment found:`, {
-                emails: enrichmentData.emails.length,
-                phones: enrichmentData.phones.length
-            });
-            
-            return enrichmentData;
-        } else {
-            console.log(`[${requestId}] No Apollo.io results found for ${contact.first_name} ${contact.last_name}`);
-            return null;
+        enrichmentRequests.forEach((request, originalIndex) => {
+            if (request) {
+                requestIndexMap.set(validRequests.length, originalIndex);
+                validRequests.push(request);
+            }
+        });
+        
+        if (validRequests.length === 0) {
+            console.warn(`[${requestId}] No valid contacts for Apollo.io bulk search`);
+            return batch.map(() => null);
         }
         
+        console.log(`[${requestId}] Apollo.io bulk search: ${validRequests.length} valid requests`);
+        
+        // Perform bulk API call
+        const bulkResult = await performBulkApiCallWithRetry(validRequests, apiKey, requestId);
+        
+        // Initialize results array with nulls
+        const results = new Array(batch.length).fill(null);
+        
+        // Process bulk results and map back to original positions
+        if (bulkResult && bulkResult.people && Array.isArray(bulkResult.people)) {
+            bulkResult.people.forEach((person, requestIndex) => {
+                const originalIndex = requestIndexMap.get(requestIndex);
+                if (originalIndex !== undefined && person && person.id) {
+                    const enrichmentData = extractEnrichmentData(person, requestId, originalIndex);
+                    results[originalIndex] = enrichmentData;
+                }
+            });
+        }
+        
+        // Log batch results
+        const successCount = results.filter(r => r !== null).length;
+        console.log(`[${requestId}] Apollo.io batch completed: ${successCount}/${batch.length} contacts enriched`);
+        
+        return results;
+        
     } catch (error) {
-        console.error(`[${requestId}] Apollo.io API error:`, error.message);
-        return null;
+        console.error(`[${requestId}] Apollo.io batch processing error:`, error.message);
+        return batch.map(() => null);
     }
 }
 
@@ -96,7 +165,7 @@ async function applyRateLimit() {
 }
 
 /**
- * Build search query for Apollo.io API
+ * Build search query for Apollo.io API (legacy single contact search)
  * @param {Object} contact - Contact information
  * @returns {Object} - API search query
  */
@@ -129,6 +198,38 @@ function buildSearchQuery(contact) {
     query.reveal_phone_number = true;
     
     return query;
+}
+
+/**
+ * Build enrichment request for Apollo.io bulk API
+ * @param {Object} contact - Contact information
+ * @param {number} index - Index for bulk requests
+ * @returns {Object} - API enrichment request
+ */
+function buildEnrichmentRequest(contact, index = null) {
+    const request = {
+        first_name: contact.first_name.trim(),
+        last_name: contact.last_name.trim(),
+        reveal_personal_emails: true,
+        reveal_phone_number: true
+    };
+    
+    // Add organization if available
+    if (contact.company_name && contact.company_name.trim()) {
+        request.organization_name = contact.company_name.trim();
+    }
+    
+    // Add title if available  
+    if (contact.job_title && contact.job_title.trim()) {
+        request.title = contact.job_title.trim();
+    }
+    
+    // Add email if available for better matching
+    if (contact.email && contact.email.trim()) {
+        request.email = contact.email.trim();
+    }
+    
+    return request;
 }
 
 /**
@@ -205,12 +306,89 @@ async function performApiCallWithRetry(query, apiKey, requestId) {
 }
 
 /**
+ * Perform Apollo.io bulk API call with retry logic
+ * @param {Array} enrichmentRequests - Array of enrichment requests
+ * @param {string} apiKey - API key
+ * @param {string} requestId - Request ID for logging
+ * @returns {Promise<Object>} - Bulk API response
+ */
+async function performBulkApiCallWithRetry(enrichmentRequests, apiKey, requestId) {
+    let lastError;
+    
+    for (let attempt = 0; attempt <= RETRY_CONFIG.maxRetries; attempt++) {
+        try {
+            if (attempt > 0) {
+                const delay = Math.min(
+                    RETRY_CONFIG.baseDelayMs * Math.pow(2, attempt - 1),
+                    RETRY_CONFIG.maxDelayMs
+                );
+                console.log(`[${requestId}] Apollo.io bulk retry attempt ${attempt} after ${delay}ms`);
+                await sleep(delay);
+            }
+            
+            // Apollo.io bulk people enrichment endpoint
+            const response = await fetch('https://api.apollo.io/api/v1/people/bulk_match', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Cache-Control': 'no-cache',
+                    'X-Api-Key': apiKey
+                },
+                body: JSON.stringify({
+                    details: enrichmentRequests
+                })
+            });
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                
+                // Handle rate limiting (429) specifically
+                if (response.status === 429) {
+                    const retryAfter = response.headers.get('retry-after');
+                    const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : 2000;
+                    console.warn(`[${requestId}] Apollo.io bulk rate limited, waiting ${waitTime}ms`);
+                    await sleep(waitTime);
+                    continue; // Don't count as a retry attempt for rate limiting
+                }
+                
+                // Handle server errors (5xx) - these should be retried
+                if (response.status >= 500) {
+                    throw new Error(`Server error: ${response.status} - ${errorText}`);
+                }
+                
+                // Client errors (4xx) - don't retry these
+                if (response.status >= 400) {
+                    console.warn(`[${requestId}] Apollo.io bulk client error: ${response.status} - ${errorText}`);
+                    return null;
+                }
+            }
+            
+            const result = await response.json();
+            console.log(`[${requestId}] Apollo.io bulk API call successful - ${enrichmentRequests.length} requests processed`);
+            return result;
+            
+        } catch (error) {
+            lastError = error;
+            console.error(`[${requestId}] Apollo.io bulk API attempt ${attempt + 1} failed:`, error.message);
+            
+            // Don't retry for network/parsing errors on the last attempt
+            if (attempt === RETRY_CONFIG.maxRetries) {
+                break;
+            }
+        }
+    }
+    
+    throw new Error(`Apollo.io bulk API failed after ${RETRY_CONFIG.maxRetries + 1} attempts. Last error: ${lastError.message}`);
+}
+
+/**
  * Extract enrichment data from Apollo.io person profile
  * @param {Object} person - Apollo.io person data
  * @param {string} requestId - Request ID for logging
+ * @param {number} contactIndex - Contact index for bulk operations (optional)
  * @returns {Object} - Extracted emails and phones
  */
-function extractEnrichmentData(person, requestId) {
+function extractEnrichmentData(person, requestId, contactIndex = null) {
     const enrichmentData = {
         emails: [],
         phones: []
@@ -263,7 +441,8 @@ function extractEnrichmentData(person, requestId) {
         }
         
         // Log extraction results
-        console.log(`[${requestId}] Extracted from Apollo.io: ${enrichmentData.emails.length} emails, ${enrichmentData.phones.length} phones`);
+        const indexStr = contactIndex !== null ? ` (contact ${contactIndex})` : '';
+        console.log(`[${requestId}] Extracted from Apollo.io${indexStr}: ${enrichmentData.emails.length} emails, ${enrichmentData.phones.length} phones`);
         
     } catch (error) {
         console.error(`[${requestId}] Error extracting Apollo.io data:`, error.message);
