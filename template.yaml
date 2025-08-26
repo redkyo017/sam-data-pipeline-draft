@@ -197,11 +197,30 @@ Resources:
               Action:
                 - sqs:SendMessage
               Resource: !GetAtt BatchFailureQueue.Arn
+
+  PipelineTriggerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/nodejs-pipeline-trigger/
+      Handler: src/index.handler
+      Description: 'Triggers any pipeline type and returns formatted response'
+      Environment:
+        Variables:
+          INGESTION_STATE_MACHINE_ARN: !Ref IngestionStateMachine
+          # ENRICHMENT_STATE_MACHINE_ARN: !Ref EnrichmentStateMachine # Add when enrichment is implemented
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+              Resource: 
+                - !Ref IngestionStateMachine
+                # - !Ref EnrichmentStateMachine # Add when enrichment is implemented
       Events:
-        ApiEvent:
+        IngestionApiEvent:
           Type: Api
           Properties:
-            Path: /pipelines/ingestion/executions
+            Path: /pipelines/{pipelineType}/executions
             Method: post
             RestApiId: !Ref IngestionApi
 

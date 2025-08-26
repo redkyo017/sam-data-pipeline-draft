@@ -119,13 +119,18 @@
                         "Type": "Pass",
                         "Parameters": {
                             "failureMessage": {
-                                "executionId.$": "$$.Execution.Name",
+                                "execution_id.$": "$$.Execution.Name",
                                 "campaign_id.$": "$.Items[0].campaign_id",
-                                "commit_id.$": "$.Items[0].commit_id",
-                                "failedBatchSize.$": "States.ArrayLength($.Items)",
-                                "error.$": "$.error.Cause",
+                                "commit_id.$": "$.Items[0].commit_id", 
                                 "timestamp.$": "$$.State.EnteredTime",
-                                "batchIndex.$": "$$.Map.Item.Index"
+                                "current.$": "States.ArrayLength($.Items)",
+                                "total": -1,
+                                "status": "failed",
+                                "pipeline": "ingestion",
+                                "error": {
+                                    "cause.$": "$.error.Cause",
+                                    "error.$": "$.error.Error"
+                                }
                             }
                         },
                         "Next": "Send Batch Failure to SQS"
@@ -173,11 +178,18 @@
             "Type": "Pass",
             "Parameters": {
                 "summaryMessage": {
-                    "executionId.$": "$$.Execution.Name",
-                    "totalBatches.$": "States.ArrayLength($)",
-                    "successfulBatches.$": "States.ArrayLength($)",
+                    "execution_id.$": "$$.Execution.Name",
+                    "campaign_id.$": "$campaign_id",
+                    "commit_id.$": "$commit_id",
                     "timestamp.$": "$$.State.EnteredTime",
-                    "type": "EXECUTION_SUMMARY"
+                    "current.$": "States.ArrayLength($)",
+                    "total.$": "States.ArrayLength($)",
+                    "status": "completed",
+                    "pipeline": "ingestion",
+                    "metadata": {
+                        "type": "EXECUTION_SUMMARY",
+                        "totalBatches.$": "States.ArrayLength($)"
+                    }
                 },
                 "originalData.$": "$",
                 "campaign_id.$": "$campaign_id",
