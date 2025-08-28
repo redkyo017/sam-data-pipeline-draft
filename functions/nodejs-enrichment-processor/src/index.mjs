@@ -75,15 +75,7 @@ export const handler = async (event, context) => {
             timestamp: new Date().toISOString()
         });
         
-        // Validate environment variables
-        if (!process.env.ROCKETREACH_API_KEY_PARAM) {
-            throw new Error('ROCKETREACH_API_KEY_PARAM environment variable not set');
-        }
-        
-        if (!process.env.APOLLO_API_KEY_PARAM) {
-            throw new Error('APOLLO_API_KEY_PARAM environment variable not set');
-        }
-        
+        // Validate required environment variables
         if (!process.env.BUCKET_NAME) {
             throw new Error('BUCKET_NAME environment variable not set');
         }
@@ -247,8 +239,8 @@ async function loadApiKeys() {
         // Load RocketReach API key if not cached
         if (!apiKeyCache.rocketreach) {
             // Priority order: local dev env var > CloudFormation param > SSM Parameter Store
-            if (process.env.ROCKETREACH_STAGING_KEY) {
-                apiKeyCache.rocketreach = process.env.ROCKETREACH_STAGING_KEY;
+            if (process.env.ROCKETREACH_API_KEY_LOCAL) {
+                apiKeyCache.rocketreach = process.env.ROCKETREACH_API_KEY_LOCAL;
                 console.log('Using RocketReach API key from local environment variable');
             } else if (process.env.ROCKETREACH_API_KEY && process.env.ROCKETREACH_API_KEY.trim() !== '') {
                 apiKeyCache.rocketreach = process.env.ROCKETREACH_API_KEY;
@@ -275,8 +267,8 @@ async function loadApiKeys() {
         // Load Apollo.io API key if not cached
         if (!apiKeyCache.apollo) {
             // Priority order: local dev env var > CloudFormation param > SSM Parameter Store
-            if (process.env.APOLLO_STAGING_KEY) {
-                apiKeyCache.apollo = process.env.APOLLO_STAGING_KEY;
+            if (process.env.APOLLO_API_KEY_LOCAL) {
+                apiKeyCache.apollo = process.env.APOLLO_API_KEY_LOCAL;
                 console.log('Using Apollo API key from local environment variable');
             } else if (process.env.APOLLO_API_KEY && process.env.APOLLO_API_KEY.trim() !== '') {
                 apiKeyCache.apollo = process.env.APOLLO_API_KEY;
@@ -325,7 +317,6 @@ async function enrichContactsWithBulkApis(contacts, requestId) {
             apiKeyCache.rocketreach ? rocketreachSearchBulk(contacts, apiKeyCache.rocketreach, requestId) : Promise.resolve(contacts.map(() => null)),
             apiKeyCache.apollo ? apolloSearchBulk(contacts, apiKeyCache.apollo, requestId) : Promise.resolve(contacts.map(() => null))
         ]);
-        
         // Process RocketReach results
         let rocketreachData = null;
         let rocketreachSuccess = false;
@@ -345,7 +336,6 @@ async function enrichContactsWithBulkApis(contacts, requestId) {
         } else if (apolloResults.status === 'rejected') {
             console.error(`[${requestId}] Apollo.io bulk API failed:`, apolloResults.reason);
         }
-        
         // Merge results for each contact
         const results = [];
         for (let i = 0; i < contacts.length; i++) {
@@ -568,14 +558,14 @@ function normalizeExistingContactData(contact) {
         contact.emails = contact.emails.map(email => {
             if (typeof email === 'string') {
                 return {
-                    email: email.toLowerCase(),
+                    value: email.toLowerCase(),
                     priority: 0, // Existing emails get highest priority
                     source: 'original',
                     confidence: 1.0
                 };
             }
             return {
-                email: (email.email || '').toLowerCase(),
+                value: (email.value || email.email || '').toLowerCase(),
                 priority: email.priority || 0,
                 source: email.source || 'original',
                 confidence: email.confidence || 1.0
@@ -588,14 +578,14 @@ function normalizeExistingContactData(contact) {
         contact.phones = contact.phones.map(phone => {
             if (typeof phone === 'string') {
                 return {
-                    phone: phone,
+                    value: phone,
                     priority: 0, // Existing phones get highest priority
                     source: 'original',
                     confidence: 1.0
                 };
             }
             return {
-                phone: phone.phone || '',
+                value: phone.value || phone.phone || '',
                 priority: phone.priority || 0,
                 source: phone.source || 'original',
                 confidence: phone.confidence || 1.0
@@ -617,8 +607,8 @@ function mergeEmails(existingEmails, newEmails, requestId) {
     
     // Add existing emails to map (they keep their existing priority)
     existingEmails.forEach(email => {
-        if (email.email) {
-            emailMap.set(email.email.toLowerCase(), email);
+        if (email.value) {
+            emailMap.set(email.value.toLowerCase(), email);
             maxExistingPriority = Math.max(maxExistingPriority, email.priority || 0);
         }
     });
@@ -627,7 +617,7 @@ function mergeEmails(existingEmails, newEmails, requestId) {
     let duplicatesSkipped = 0;
     let newEmailsAdded = 0;
     newEmails.forEach(email => {
-        const emailKey = email.email.toLowerCase();
+        const emailKey = email.value.toLowerCase();
         if (!emailMap.has(emailKey)) {
             // New email - increment priority based on order of addition
             const newEmailWithPriority = {
@@ -667,9 +657,9 @@ function mergePhones(existingPhones, newPhones, requestId) {
     
     // Add existing phones to map (they keep their existing priority)
     existingPhones.forEach(phone => {
-        if (phone.phone) {
+        if (phone.value) {
             // Normalize phone for comparison (remove all non-digits)
-            const normalizedPhone = phone.phone.replace(/\D/g, '');
+            const normalizedPhone = phone.value.replace(/\D/g, '');
             phoneMap.set(normalizedPhone, phone);
             maxExistingPriority = Math.max(maxExistingPriority, phone.priority || 0);
         }
@@ -679,7 +669,7 @@ function mergePhones(existingPhones, newPhones, requestId) {
     let duplicatesSkipped = 0;
     let newPhonesAdded = 0;
     newPhones.forEach(phone => {
-        const normalizedPhone = phone.phone.replace(/\D/g, '');
+        const normalizedPhone = phone.value.replace(/\D/g, '');
         if (!phoneMap.has(normalizedPhone)) {
             // New phone - increment priority based on order of addition
             const newPhoneWithPriority = {

@@ -210,8 +210,8 @@ function buildEnrichmentRequest(contact, index = null) {
     const request = {
         first_name: contact.first_name.trim(),
         last_name: contact.last_name.trim(),
-        reveal_personal_emails: true,
-        reveal_phone_number: true
+        // reveal_personal_emails: true,
+        // reveal_phone_number: true
     };
     
     // Add organization if available
@@ -227,6 +227,11 @@ function buildEnrichmentRequest(contact, index = null) {
     // Add email if available for better matching
     if (contact.email && contact.email.trim()) {
         request.email = contact.email.trim();
+    }
+
+    // Add linkedin if available for better matching
+    if (contact.linkedin_url && contact.linkedin_url.trim()) {
+        request.linkedin_url = contact.linkedin_url.trim();
     }
     
     return request;
@@ -327,7 +332,7 @@ async function performBulkApiCallWithRetry(enrichmentRequests, apiKey, requestId
             }
             
             // Apollo.io bulk people enrichment endpoint
-            const response = await fetch('https://api.apollo.io/api/v1/people/bulk_match', {
+            const response = await fetch('https://api.apollo.io/api/v1/people/bulk_match?reveal_personal_emails=true&reveal_phone_number=true', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -396,9 +401,9 @@ function extractEnrichmentData(person, requestId, contactIndex = null) {
     
     try {
         // Extract emails
-        if (person.email && isValidEmail(person.email)) {
+        if (person.email) {
             enrichmentData.emails.push({
-                email: person.email.toLowerCase(),
+                value: person.email.toLowerCase(),
                 priority: 1, // Primary email gets highest priority
                 source: 'apollo',
                 confidence: person.email_status === 'verified' ? 0.9 : 0.7
@@ -408,9 +413,9 @@ function extractEnrichmentData(person, requestId, contactIndex = null) {
         // Extract personal emails if available
         if (person.personal_emails && Array.isArray(person.personal_emails)) {
             person.personal_emails.forEach((email, index) => {
-                if (email && isValidEmail(email)) {
+                if (email) {
                     enrichmentData.emails.push({
-                        email: email.toLowerCase(),
+                        value: email.toLowerCase(),
                         priority: 2, // Personal emails get lower priority
                         source: 'apollo',
                         confidence: 0.8
@@ -420,9 +425,9 @@ function extractEnrichmentData(person, requestId, contactIndex = null) {
         }
         
         // Extract phone numbers
-        if (person.sanitized_phone && isValidPhone(person.sanitized_phone)) {
+        if (person.sanitized_phone) {
             enrichmentData.phones.push({
-                phone: formatPhoneNumber(person.sanitized_phone),
+                value: formatPhoneNumber(person.sanitized_phone),
                 priority: 1, // Primary phone gets highest priority
                 source: 'apollo',
                 confidence: 0.8
@@ -430,10 +435,9 @@ function extractEnrichmentData(person, requestId, contactIndex = null) {
         }
         
         // Extract corporate phone if different
-        if (person.corporate_phone && isValidPhone(person.corporate_phone) && 
-            person.corporate_phone !== person.sanitized_phone) {
+        if (person.corporate_phone && person.corporate_phone !== person.sanitized_phone) {
             enrichmentData.phones.push({
-                phone: formatPhoneNumber(person.corporate_phone),
+                value: formatPhoneNumber(person.corporate_phone),
                 priority: 2, // Corporate phone gets lower priority
                 source: 'apollo',
                 confidence: 0.7

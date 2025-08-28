@@ -98,7 +98,6 @@ async function processBatch(batch, apiKey, requestId) {
                 validQueries.push(query);
             }
         });
-        
         if (validQueries.length === 0) {
             console.warn(`[${requestId}] No valid contacts for RocketReach bulk search`);
             return batch.map(() => null);
@@ -113,7 +112,17 @@ async function processBatch(batch, apiKey, requestId) {
         const results = new Array(batch.length).fill(null);
         
         // Process bulk results and map back to original positions
-        if (bulkResult && bulkResult.profiles && Array.isArray(bulkResult.profiles)) {
+        // RocketReach bulk API returns direct results with emails[] and phones[] fields
+        if (bulkResult && Array.isArray(bulkResult)) {
+            bulkResult.forEach((personData, queryIndex) => {
+                const originalIndex = queryIndexMap.get(queryIndex);
+                if (originalIndex !== undefined && personData) {
+                    const enrichmentData = extractEnrichmentData(personData, requestId, originalIndex);
+                    results[originalIndex] = enrichmentData;
+                }
+            });
+        } else if (bulkResult && bulkResult.profiles && Array.isArray(bulkResult.profiles)) {
+            // Fallback for legacy response format
             bulkResult.profiles.forEach((profileData, queryIndex) => {
                 const originalIndex = queryIndexMap.get(queryIndex);
                 if (originalIndex !== undefined && profileData && profileData.profiles && profileData.profiles.length > 0) {
@@ -187,12 +196,16 @@ function buildSearchQuery(contact, index = null) {
     }
     
     // Add location if available
-    if (contact.city && contact.state) {
-        query.location = `${contact.city}, ${contact.state}`.trim();
-    } else if (contact.city) {
-        query.location = contact.city.trim();
-    }
+    // if (contact.city && contact.state) {
+    //     query.location = `${contact.city}, ${contact.state}`.trim();
+    // } else if (contact.city) {
+    //     query.location = contact.city.trim();
+    // }
     
+    // Add linkedin if available for better matching
+    if (contact.linkedin_url && contact.linkedin_url.trim()) {
+        query.linkedin_url = contact.linkedin_url.trim();
+    }
     return query;
 }
 
@@ -360,9 +373,9 @@ function extractEnrichmentData(profile, requestId, contactIndex = null) {
         // Extract emails
         if (profile.emails && Array.isArray(profile.emails)) {
             profile.emails.forEach(email => {
-                if (email.email && isValidEmail(email.email)) {
+                if (email.email) {
                     enrichmentData.emails.push({
-                        email: email.email.toLowerCase(),
+                        value: email.email.toLowerCase(),
                         priority: 1, // All RocketReach emails get same priority
                         source: 'rocketreach',
                         confidence: email.confidence || null
@@ -374,9 +387,9 @@ function extractEnrichmentData(profile, requestId, contactIndex = null) {
         // Extract phone numbers
         if (profile.phones && Array.isArray(profile.phones)) {
             profile.phones.forEach(phone => {
-                if (phone.number && isValidPhone(phone.number)) {
+                if (phone.number) {
                     enrichmentData.phones.push({
-                        phone: formatPhoneNumber(phone.number),
+                        value: formatPhoneNumber(phone.number),
                         priority: 1, // All RocketReach phones get same priority
                         source: 'rocketreach',
                         confidence: phone.confidence || null
