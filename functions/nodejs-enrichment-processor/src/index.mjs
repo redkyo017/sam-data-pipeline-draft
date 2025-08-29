@@ -4,8 +4,8 @@
 
 import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
 import { S3Client } from "@aws-sdk/client-s3";
-import { searchContact as rocketreachSearch, searchContacts as rocketreachSearchBulk } from './rocketreach-api.mjs';
-import { searchContact as apolloSearch, searchContacts as apolloSearchBulk } from './apollo-api.mjs';
+import { searchContact as rocketreachSearch, searchContacts as rocketreachSearchIndividual, searchContactsBulk as rocketreachSearchBulk } from './rocketreach-api.mjs';
+import { searchContact as apolloSearch, searchContacts as apolloSearchIndividual, searchContactsBulk as apolloSearchBulk } from './apollo-api.mjs';
 import { writeEnrichedContactToS3 } from './s3-writer.mjs';
 
 // Initialize AWS clients
@@ -83,18 +83,18 @@ export const handler = async (event, context) => {
         // Load API keys from Parameter Store
         await loadApiKeys();
         
-        // Process contacts in bulk using new bulk APIs
-        console.log(`[${requestId}] Starting bulk enrichment processing for ${batchItems.length} contacts`);
+        // Process contacts individually using individual APIs
+        console.log(`[${requestId}] Starting individual enrichment processing for ${batchItems.length} contacts`);
         
-        const bulkEnrichmentResults = await enrichContactsWithBulkApis(batchItems, requestId);
+        const individualEnrichmentResults = await enrichContactsWithIndividualApis(batchItems, requestId);
         
         // Write individual files and collect results
         const enrichedRecords = [];
         const writtenFiles = [];
         const processingErrors = [];
         
-        for (let i = 0; i < bulkEnrichmentResults.length; i++) {
-            const enrichmentResult = bulkEnrichmentResults[i];
+        for (let i = 0; i < individualEnrichmentResults.length; i++) {
+            const enrichmentResult = individualEnrichmentResults[i];
             const originalContact = batchItems[i];
             
             if (enrichmentResult.error) {
@@ -142,16 +142,23 @@ export const handler = async (event, context) => {
             } else {
                 // Handle successful enrichment
                 const enrichedContact = enrichmentResult.enrichedContact;
+                const enrichmentMetadata = enrichmentResult.enrichmentMetadata;
                 
-                // Add campaign and commit metadata
+                // Add campaign and commit metadata to contact
                 enrichedContact.campaign_id = campaign_id;
                 enrichedContact.commit_id = commit_id;
                 
-                enrichedRecords.push(enrichedContact);
+                // Create final contact with metadata for storage
+                const finalContact = {
+                    ...enrichedContact,
+                    enrichment_metadata: enrichmentMetadata
+                };
+                
+                enrichedRecords.push(finalContact);
                 
                 // Write individual enriched contact to S3
                 try {
-                    const fileName = await writeEnrichedContactToS3(s3Client, enrichedContact, campaign_id, commit_id, requestId);
+                    const fileName = await writeEnrichedContactToS3(s3Client, finalContact, campaign_id, commit_id, requestId);
                     if (fileName) {
                         writtenFiles.push(fileName);
                         console.log(`[${requestId}] Written individual file: ${fileName}`);
@@ -301,21 +308,21 @@ async function loadApiKeys() {
 }
 
 /**
- * Enrich multiple contacts using bulk APIs
+ * Enrich multiple contacts using individual API calls
  * @param {Array} contacts - Array of contact objects
  * @param {string} requestId - Request ID for logging correlation
  * @returns {Promise<Array>} - Array of enrichment results
  */
-async function enrichContactsWithBulkApis(contacts, requestId) {
+async function enrichContactsWithIndividualApis(contacts, requestId) {
     const enrichmentStartTime = Date.now();
     
     try {
-        console.log(`[${requestId}] Starting bulk enrichment for ${contacts.length} contacts`);
+        console.log(`[${requestId}] Starting individual enrichment for ${contacts.length} contacts`);
         
-        // Make bulk API calls to both services in parallel
+        // Make individual API calls to both services (now processing individually)
         const [rocketreachResults, apolloResults] = await Promise.allSettled([
-            apiKeyCache.rocketreach ? rocketreachSearchBulk(contacts, apiKeyCache.rocketreach, requestId) : Promise.resolve(contacts.map(() => null)),
-            apiKeyCache.apollo ? apolloSearchBulk(contacts, apiKeyCache.apollo, requestId) : Promise.resolve(contacts.map(() => null))
+            apiKeyCache.rocketreach ? rocketreachSearchIndividual(contacts, apiKeyCache.rocketreach, requestId) : Promise.resolve(contacts.map(() => null)),
+            apiKeyCache.apollo ? apolloSearchIndividual(contacts, apiKeyCache.apollo, requestId) : Promise.resolve(contacts.map(() => null))
         ]);
         // Process RocketReach results
         let rocketreachData = null;
@@ -324,7 +331,7 @@ async function enrichContactsWithBulkApis(contacts, requestId) {
             rocketreachData = rocketreachResults.value;
             rocketreachSuccess = true;
         } else if (rocketreachResults.status === 'rejected') {
-            console.error(`[${requestId}] RocketReach bulk API failed:`, rocketreachResults.reason);
+            console.error(`[${requestId}] RocketReach individual API failed:`, rocketreachResults.reason);
         }
         
         // Process Apollo.io results
@@ -334,7 +341,7 @@ async function enrichContactsWithBulkApis(contacts, requestId) {
             apolloData = apolloResults.value;
             apolloSuccess = true;
         } else if (apolloResults.status === 'rejected') {
-            console.error(`[${requestId}] Apollo.io bulk API failed:`, apolloResults.reason);
+            console.error(`[${requestId}] Apollo.io individual API failed:`, apolloResults.reason);
         }
         // Merge results for each contact
         const results = [];
@@ -354,8 +361,8 @@ async function enrichContactsWithBulkApis(contacts, requestId) {
                 const totalEmailsAdded = mergedData.emails ? mergedData.emails.length - (contact.emails ? contact.emails.length : 0) : 0;
                 const totalPhonesAdded = mergedData.phones ? mergedData.phones.length - (contact.phones ? contact.phones.length : 0) : 0;
                 
-                // Add enrichment metadata
-                mergedData.enrichment_metadata = {
+                // Create enrichment metadata separately
+                const enrichmentMetadata = {
                     enriched_at: new Date().toISOString(),
                     enrichment_time_ms: contactProcessingTime,
                     rocketreach_success: !!rocketreachContactData,
@@ -370,6 +377,7 @@ async function enrichContactsWithBulkApis(contacts, requestId) {
                 
                 results.push({
                     enrichedContact: mergedData,
+                    enrichmentMetadata: enrichmentMetadata,
                     processingTime: contactProcessingTime
                 });
                 
@@ -392,12 +400,12 @@ async function enrichContactsWithBulkApis(contacts, requestId) {
         const totalEnrichmentTime = Date.now() - enrichmentStartTime;
         const successCount = results.filter(r => !r.error).length;
         
-        console.log(`[${requestId}] Bulk enrichment completed in ${totalEnrichmentTime}ms: ${successCount}/${contacts.length} contacts successful`);
+        console.log(`[${requestId}] Individual enrichment completed in ${totalEnrichmentTime}ms: ${successCount}/${contacts.length} contacts successful`);
         return results;
         
     } catch (error) {
         const totalEnrichmentTime = Date.now() - enrichmentStartTime;
-        console.error(`[${requestId}] Bulk enrichment error after ${totalEnrichmentTime}ms:`, error);
+        console.error(`[${requestId}] Individual enrichment error after ${totalEnrichmentTime}ms:`, error);
         
         // Return error results for all contacts
         return contacts.map(() => ({
@@ -463,8 +471,8 @@ async function enrichContactWithApis(contact, requestId) {
         const totalEmailsAdded = mergedData.emails ? mergedData.emails.length - (contact.emails ? contact.emails.length : 0) : 0;
         const totalPhonesAdded = mergedData.phones ? mergedData.phones.length - (contact.phones ? contact.phones.length : 0) : 0;
         
-        // Add enrichment metadata
-        mergedData.enrichment_metadata = {
+        // Create enrichment metadata separately
+        const enrichmentMetadata = {
             enriched_at: new Date().toISOString(),
             enrichment_time_ms: enrichmentTime,
             rocketreach_success: rocketreachSuccess,
@@ -477,8 +485,14 @@ async function enrichContactWithApis(contact, requestId) {
             ]
         };
         
+        // Return final contact with metadata
+        const finalContact = {
+            ...mergedData,
+            enrichment_metadata: enrichmentMetadata
+        };
+        
         console.log(`[${requestId}] Enrichment completed in ${enrichmentTime}ms: +${totalEmailsAdded} emails, +${totalPhonesAdded} phones`);
-        return mergedData;
+        return finalContact;
         
     } catch (error) {
         console.error(`[${requestId}] Error during enrichment:`, error);

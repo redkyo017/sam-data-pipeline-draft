@@ -11,31 +11,115 @@ const RATE_LIMIT = {
 
 // Retry configuration
 const RETRY_CONFIG = {
-    maxRetries: 3,
+    maxRetries: 1,
     baseDelayMs: 1000,
     maxDelayMs: 10000
 };
 
 /**
- * Search for contact information using Apollo.io API (single contact - legacy)
+ * Search for contact information using Apollo.io API (single contact)
+ * Uses the individual people search API endpoint
  * @param {Object} contact - Contact object with name, company, etc.
  * @param {string} apiKey - Apollo.io API key
  * @param {string} requestId - Request ID for logging correlation
  * @returns {Promise<Object>} - Enriched contact data or null
  */
 export async function searchContact(contact, apiKey, requestId) {
-    const results = await searchContacts([contact], apiKey, requestId);
-    return results && results.length > 0 ? results[0] : null;
+    return await searchContactIndividual(contact, apiKey, requestId);
 }
 
 /**
- * Bulk search for contact information using Apollo.io API
- * @param {Array} contacts - Array of contact objects with name, company, etc.
+ * Search for contact information using Apollo.io API (single contact - individual API)
+ * Uses the individual people search API endpoint for better accuracy
+ * @param {Object} contact - Contact object with name, company, etc.
+ * @param {string} apiKey - Apollo.io API key
+ * @param {string} requestId - Request ID for logging correlation
+ * @returns {Promise<Object>} - Enriched contact data or null
+ */
+export async function searchContactIndividual(contact, apiKey, requestId) {
+    if (!apiKey) {
+        console.error(`[${requestId}] Apollo.io API key not provided`);
+        return null;
+    }
+    
+    if (!contact || !contact.first_name || !contact.last_name) {
+        console.warn(`[${requestId}] Insufficient data for Apollo.io search: missing name`);
+        return null;
+    }
+    
+    try {
+        // Apply rate limiting
+        await applyRateLimit();
+        
+        // Build individual search query
+        const searchQuery = buildIndividualSearchQuery(contact);
+        
+        console.log(`[${requestId}] Apollo.io individual search: ${contact.first_name} ${contact.last_name}`);
+        
+        // Perform individual API call
+        const result = await performIndividualApiCallWithRetry(searchQuery, apiKey, requestId);
+        
+        if (result && result.people && result.people.length > 0) {
+            const person = result.people[0]; // Take the first match
+            const enrichmentData = extractEnrichmentData(person, requestId);
+            console.log(`[${requestId}] Apollo.io individual search successful: ${enrichmentData.emails.length} emails, ${enrichmentData.phones.length} phones`);
+            return enrichmentData;
+        }
+        
+        console.log(`[${requestId}] Apollo.io individual search returned no results`);
+        return null;
+        
+    } catch (error) {
+        console.error(`[${requestId}] Apollo.io individual search error:`, error.message);
+        return null;
+    }
+}
+
+/**
+ * Process multiple contacts using individual API calls with rate limiting
+ * @param {Array} contacts - Array of contact objects
  * @param {string} apiKey - Apollo.io API key
  * @param {string} requestId - Request ID for logging correlation
  * @returns {Promise<Array>} - Array of enriched contact data (same order as input)
  */
 export async function searchContacts(contacts, apiKey, requestId) {
+    if (!apiKey) {
+        console.error(`[${requestId}] Apollo.io API key not provided`);
+        return contacts.map(() => null);
+    }
+    
+    if (!contacts || contacts.length === 0) {
+        return [];
+    }
+    
+    console.log(`[${requestId}] Processing ${contacts.length} contacts individually with Apollo.io API`);
+    const results = [];
+    
+    try {
+        // Process contacts individually with rate limiting
+        for (let i = 0; i < contacts.length; i++) {
+            const contact = contacts[i];
+            console.log(`[${requestId}] Processing Apollo.io contact ${i + 1}/${contacts.length}: ${contact.first_name} ${contact.last_name}`);
+            
+            const result = await searchContactIndividual(contact, apiKey, requestId);
+            results.push(result);
+        }
+        
+        const successCount = results.filter(r => r !== null).length;
+        console.log(`[${requestId}] Apollo.io individual processing completed: ${successCount}/${contacts.length} contacts enriched`);
+        
+        return results;
+        
+    } catch (error) {
+        console.error(`[${requestId}] Apollo.io individual processing error:`, error.message);
+        return contacts.map(() => null);
+    }
+}
+
+/**
+ * Bulk search functions (available for future use)
+ */
+export async function searchContactsBulk(contacts, apiKey, requestId) {
     if (!apiKey) {
         console.error(`[${requestId}] Apollo.io API key not provided`);
         return contacts.map(() => null);
@@ -53,7 +137,7 @@ export async function searchContacts(contacts, apiKey, requestId) {
         // Process contacts in batches of 10
         for (let i = 0; i < contacts.length; i += MAX_BATCH_SIZE) {
             const batch = contacts.slice(i, i + MAX_BATCH_SIZE);
-            console.log(`[${requestId}] Processing Apollo.io batch ${Math.floor(i/MAX_BATCH_SIZE) + 1}: ${batch.length} contacts`);
+            console.log(`[${requestId}] Processing Apollo.io bulk batch ${Math.floor(i/MAX_BATCH_SIZE) + 1}: ${batch.length} contacts`);
             
             const batchResults = await processBatch(batch, apiKey, requestId);
             results.push(...batchResults);
@@ -165,7 +249,126 @@ async function applyRateLimit() {
 }
 
 /**
- * Build search query for Apollo.io API (legacy single contact search)
+ * Build individual search query for Apollo.io people search API
+ * @param {Object} contact - Contact information
+ * @returns {Object} - API search query for individual search
+ */
+function buildIndividualSearchQuery(contact) {
+    const query = {
+        first_name: contact.first_name.trim(),
+        last_name: contact.last_name.trim(),
+        per_page: 1, // We only need the top match
+        reveal_personal_emails: true,
+        reveal_phone_number: true
+    };
+    
+    // Add organization if available
+    if (contact.company_name && contact.company_name.trim()) {
+        query.organization_names = [contact.company_name.trim()];
+    }
+    
+    // Add title if available
+    if (contact.job_title && contact.job_title.trim()) {
+        query.person_titles = [contact.job_title.trim()];
+    }
+    
+    // Add location if available
+    if (contact.city && contact.state) {
+        query.person_locations = [`${contact.city}, ${contact.state}`.trim()];
+    } else if (contact.city) {
+        query.person_locations = [contact.city.trim()];
+    }
+    
+    // Add email if available for better matching
+    if (contact.email && contact.email.trim()) {
+        query.emails = [contact.email.trim()];
+    }
+    
+    // Add linkedin if available for better matching
+    if (contact.linkedin_url && contact.linkedin_url.trim()) {
+        query.linkedin_urls = [contact.linkedin_url.trim()];
+    }
+    
+    return query;
+}
+
+/**
+ * Perform Apollo.io individual API call with retry logic and exponential backoff
+ * Uses the people search API endpoint
+ * @param {Object} query - Search query
+ * @param {string} apiKey - API key
+ * @param {string} requestId - Request ID for logging
+ * @returns {Promise<Object>} - API response
+ */
+async function performIndividualApiCallWithRetry(query, apiKey, requestId) {
+    let lastError;
+    
+    for (let attempt = 0; attempt <= RETRY_CONFIG.maxRetries; attempt++) {
+        try {
+            if (attempt > 0) {
+                const delay = Math.min(
+                    RETRY_CONFIG.baseDelayMs * Math.pow(2, attempt - 1),
+                    RETRY_CONFIG.maxDelayMs
+                );
+                console.log(`[${requestId}] Apollo.io individual retry attempt ${attempt} after ${delay}ms`);
+                await sleep(delay);
+            }
+            
+            // Apollo.io individual people search endpoint
+            const response = await fetch('https://api.apollo.io/v1/mixed_people/search', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Cache-Control': 'no-cache',
+                    'X-Api-Key': apiKey
+                },
+                body: JSON.stringify(query)
+            });
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                
+                // Handle rate limiting (429) specifically
+                if (response.status === 429) {
+                    const retryAfter = response.headers.get('retry-after');
+                    const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : 2000;
+                    console.warn(`[${requestId}] Apollo.io individual rate limited, waiting ${waitTime}ms`);
+                    await sleep(waitTime);
+                    continue; // Don't count as a retry attempt for rate limiting
+                }
+                
+                // Handle server errors (5xx) - these should be retried
+                if (response.status >= 500) {
+                    throw new Error(`Server error: ${response.status} - ${errorText}`);
+                }
+                
+                // Client errors (4xx) - don't retry these
+                if (response.status >= 400) {
+                    console.warn(`[${requestId}] Apollo.io individual client error: ${response.status} - ${errorText}`);
+                    return null;
+                }
+            }
+            
+            const result = await response.json();
+            console.log(`[${requestId}] Apollo.io individual API call successful`);
+            return result;
+            
+        } catch (error) {
+            lastError = error;
+            console.error(`[${requestId}] Apollo.io individual API attempt ${attempt + 1} failed:`, error.message);
+            
+            // Don't retry for network/parsing errors on the last attempt
+            if (attempt === RETRY_CONFIG.maxRetries) {
+                break;
+            }
+        }
+    }
+    
+    throw new Error(`Apollo.io individual API failed after ${RETRY_CONFIG.maxRetries + 1} attempts. Last error: ${lastError.message}`);
+}
+
+/**
+ * Build search query for Apollo.io API (bulk search)
  * @param {Object} contact - Contact information
  * @returns {Object} - API search query
  */
