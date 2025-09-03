@@ -7,6 +7,7 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { searchContact as rocketreachSearch, searchContacts as rocketreachSearchIndividual, searchContactsBulk as rocketreachSearchBulk } from './rocketreach-api.mjs';
 import { searchContact as apolloSearch, searchContacts as apolloSearchIndividual, searchContactsBulk as apolloSearchBulk } from './apollo-api.mjs';
 import { writeEnrichedContactToS3 } from './s3-writer.mjs';
+import { ENRICH_DATA_STRUCTURE } from './enrich-data-structure.mjs';
 
 // Initialize AWS clients
 const ssmClient = new SSMClient({});
@@ -88,125 +89,48 @@ export const handler = async (event, context) => {
         
         const individualEnrichmentResults = await enrichContactsWithIndividualApis(batchItems, requestId);
         
-        // Write individual files and collect results
+        // Transform results to match ENRICH_DATA_STRUCTURE format
         const enrichedRecords = [];
-        const writtenFiles = [];
-        const processingErrors = [];
         
         for (let i = 0; i < individualEnrichmentResults.length; i++) {
             const enrichmentResult = individualEnrichmentResults[i];
             const originalContact = batchItems[i];
             
+            let transformedContact;
+            
             if (enrichmentResult.error) {
-                // Handle processing error
-                processingErrors.push({
-                    contactIndex: i + 1,
-                    contactName: `${originalContact.first_name || 'Unknown'} ${originalContact.last_name || 'Unknown'}`,
-                    error: enrichmentResult.error,
-                    processingTimeMs: enrichmentResult.processingTime || 0
-                });
+                console.error(`[${requestId}] Error processing contact ${i + 1}: ${enrichmentResult.error}`);
                 
-                console.error(`[${requestId}] Error processing contact ${i + 1}`, {
-                    contactName: `${originalContact.first_name || 'Unknown'} ${originalContact.last_name || 'Unknown'}`,
-                    errorMessage: enrichmentResult.error
-                });
-                
-                // Create error contact with metadata
-                const errorContact = {
-                    ...originalContact,
-                    campaign_id: campaign_id,
-                    commit_id: commit_id,
-                    enrichment_metadata: {
-                        enriched_at: new Date().toISOString(),
-                        rocketreach_success: false,
-                        apollo_success: false,
-                        total_emails_added: 0,
-                        total_phones_added: 0,
-                        error: enrichmentResult.error
-                    }
-                };
-                
-                enrichedRecords.push(errorContact);
-                
-                // Try to write error contact to S3
-                try {
-                    const fileName = await writeEnrichedContactToS3(s3Client, errorContact, campaign_id, commit_id, requestId);
-                    if (fileName) {
-                        writtenFiles.push(fileName);
-                        console.log(`[${requestId}] Written error contact file: ${fileName}`);
-                    }
-                } catch (writeError) {
-                    console.error(`[${requestId}] Failed to write error contact to S3:`, writeError);
-                }
+                // Create error contact in standard format
+                transformedContact = transformToEnrichDataStructure(originalContact, null, campaign_id, commit_id, "error");
                 
             } else {
-                // Handle successful enrichment
-                const enrichedContact = enrichmentResult.enrichedContact;
-                const enrichmentMetadata = enrichmentResult.enrichmentMetadata;
-                
-                // Add campaign and commit metadata to contact
-                enrichedContact.campaign_id = campaign_id;
-                enrichedContact.commit_id = commit_id;
-                
-                // Create final contact with metadata for storage
-                const finalContact = {
-                    ...enrichedContact,
-                    enrichment_metadata: enrichmentMetadata
-                };
-                
-                enrichedRecords.push(finalContact);
-                
-                // Write individual enriched contact to S3
-                try {
-                    const fileName = await writeEnrichedContactToS3(s3Client, finalContact, campaign_id, commit_id, requestId);
-                    if (fileName) {
-                        writtenFiles.push(fileName);
-                        console.log(`[${requestId}] Written individual file: ${fileName}`);
-                    }
-                } catch (writeError) {
-                    console.error(`[${requestId}] Failed to write enriched contact to S3:`, writeError);
+                // Transform successful enrichment to standard format
+                transformedContact = transformToEnrichDataStructure(
+                    enrichmentResult.enrichedContact, 
+                    enrichmentResult.enrichmentMetadata, 
+                    campaign_id, 
+                    commit_id, 
+                    "enriched"
+                );
+            }
+            
+            enrichedRecords.push(transformedContact);
+            
+            // Write to S3
+            try {
+                const fileName = await writeEnrichedContactToS3(s3Client, transformedContact, campaign_id, commit_id, requestId);
+                if (fileName) {
+                    console.log(`[${requestId}] Written file: ${fileName}`);
                 }
+            } catch (writeError) {
+                console.error(`[${requestId}] Failed to write contact to S3:`, writeError);
             }
         }
         
-        // Calculate processing metrics
-        const processingTime = Date.now() - startTime;
-        const successfulEnrichments = enrichedRecords.filter(record => 
-            record.enrichment_metadata && 
-            (record.enrichment_metadata.rocketreach_success || record.enrichment_metadata.apollo_success)
-        ).length;
+        console.log(`[${requestId}] Enrichment batch completed: ${enrichedRecords.length} records processed`);
         
-        const totalEmailsAdded = enrichedRecords.reduce((sum, record) => 
-            sum + (record.enrichment_metadata?.total_emails_added || 0), 0);
-        const totalPhonesAdded = enrichedRecords.reduce((sum, record) => 
-            sum + (record.enrichment_metadata?.total_phones_added || 0), 0);
-        
-        // Comprehensive success logging
-        console.log(`[${requestId}] Enrichment batch completed`, {
-            totalRecords: enrichedRecords.length,
-            successfulEnrichments: successfulEnrichments,
-            processingErrors: processingErrors.length,
-            enrichmentSuccessRate: `${((successfulEnrichments / enrichedRecords.length) * 100).toFixed(1)}%`,
-            totalEmailsAdded: totalEmailsAdded,
-            totalPhonesAdded: totalPhonesAdded,
-            filesWritten: writtenFiles.length,
-            processingTimeMs: processingTime,
-            averageTimePerRecord: Math.round(processingTime / enrichedRecords.length),
-            campaignId: campaign_id,
-            commitId: commit_id,
-            memoryUsedMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-            timestamp: new Date().toISOString()
-        });
-        
-        // Log individual errors if any occurred
-        if (processingErrors.length > 0) {
-            console.warn(`[${requestId}] Processing errors summary`, {
-                errorCount: processingErrors.length,
-                errors: processingErrors
-            });
-        }
-        
-        // Return enriched records (maintaining compatibility with existing pipeline)
+        // Return enriched records in standard format
         return enrichedRecords;
         
     } catch (error) {
@@ -237,6 +161,63 @@ export const handler = async (event, context) => {
         return [];
     }
 };
+
+/**
+ * Transform enriched contact data to match ENRICH_DATA_STRUCTURE format
+ * @param {Object} contact - Enriched contact data
+ * @param {Object} metadata - Enrichment metadata (optional)
+ * @param {string} campaign_id - Campaign ID
+ * @param {string} commit_id - Commit ID
+ * @param {string} status - Contact status
+ * @returns {Object} - Transformed contact in standard format
+ */
+function transformToEnrichDataStructure(contact, _metadata, campaign_id, commit_id, status) {
+    return {
+        id: contact.id || "",
+        commit_id: commit_id || "",
+        campaign_id: campaign_id || "",
+        first_name: contact.first_name || "",
+        last_name: contact.last_name || "",
+        company_name: contact.company_name || "",
+        job_title: contact.job_title || "",
+        country: contact.country || "",
+        linkedin_url: contact.linkedin_url || "",
+        address1: contact.address1 || "",
+        address2: contact.address2 || "",
+        city: contact.city || "",
+        state: contact.state || "",
+        zip_code: contact.zip_code || "",
+        status: status || "created",
+        emails: transformEmailsToStandardFormat(contact.emails || []),
+        phones: transformPhonesToStandardFormat(contact.phones || [])
+    };
+}
+
+/**
+ * Transform emails to standard format with id, value, and priority
+ * @param {Array} emails - Array of email objects
+ * @returns {Array} - Transformed emails
+ */
+function transformEmailsToStandardFormat(emails) {
+    return emails.map((email, index) => ({
+        id: email.id || `email_${index + 1}`,
+        value: email.value || email.email || "",
+        priority: email.priority || (index + 1)
+    }));
+}
+
+/**
+ * Transform phones to standard format with id, value, and priority
+ * @param {Array} phones - Array of phone objects
+ * @returns {Array} - Transformed phones
+ */
+function transformPhonesToStandardFormat(phones) {
+    return phones.map((phone, index) => ({
+        id: phone.id || `phone_${index + 1}`,
+        value: phone.value || phone.phone || "",
+        priority: phone.priority || (index + 1)
+    }));
+}
 
 /**
  * Load API keys from environment variables (for local dev) or Parameter Store with caching
@@ -415,104 +396,105 @@ async function enrichContactsWithIndividualApis(contacts, requestId) {
     }
 }
 
-/**
- * Enrich contact data by calling both RocketReach and Apollo.io APIs in parallel
- * @param {Object} contact - Original contact data
- * @param {string} requestId - Request ID for logging correlation
- * @returns {Promise<Object>} - Enriched contact with merged data
- */
-async function enrichContactWithApis(contact, requestId) {
-    const enrichmentStartTime = Date.now();
-    
-    try {
-        // Make parallel API calls to available services
-        console.log(`[${requestId}] Starting parallel enrichment for ${contact.first_name} ${contact.last_name}`);
-        
-        const promises = [];
-        if (apiKeyCache.rocketreach) {
-            promises.push(rocketreachSearch(contact, apiKeyCache.rocketreach, requestId));
-        } else {
-            promises.push(Promise.resolve(null));
-        }
-        
-        if (apiKeyCache.apollo) {
-            promises.push(apolloSearch(contact, apiKeyCache.apollo, requestId));
-        } else {
-            promises.push(Promise.resolve(null));
-        }
-        
-        const [rocketreachResult, apolloResult] = await Promise.allSettled(promises);
-        
-        // Process RocketReach results
-        let rocketreachData = null;
-        let rocketreachSuccess = false;
-        if (rocketreachResult.status === 'fulfilled' && rocketreachResult.value) {
-            rocketreachData = rocketreachResult.value;
-            rocketreachSuccess = true;
-        } else if (rocketreachResult.status === 'rejected') {
-            console.error(`[${requestId}] RocketReach API failed:`, rocketreachResult.reason);
-        }
-        
-        // Process Apollo.io results
-        let apolloData = null;
-        let apolloSuccess = false;
-        if (apolloResult.status === 'fulfilled' && apolloResult.value) {
-            apolloData = apolloResult.value;
-            apolloSuccess = true;
-        } else if (apolloResult.status === 'rejected') {
-            console.error(`[${requestId}] Apollo.io API failed:`, apolloResult.reason);
-        }
-        
-        // Merge enrichment data
-        const mergedData = mergeEnrichmentData(contact, rocketreachData, apolloData, requestId);
-        
-        // Calculate enrichment metrics
-        const enrichmentTime = Date.now() - enrichmentStartTime;
-        const totalEmailsAdded = mergedData.emails ? mergedData.emails.length - (contact.emails ? contact.emails.length : 0) : 0;
-        const totalPhonesAdded = mergedData.phones ? mergedData.phones.length - (contact.phones ? contact.phones.length : 0) : 0;
-        
-        // Create enrichment metadata separately
-        const enrichmentMetadata = {
-            enriched_at: new Date().toISOString(),
-            enrichment_time_ms: enrichmentTime,
-            rocketreach_success: rocketreachSuccess,
-            apollo_success: apolloSuccess,
-            total_emails_added: Math.max(0, totalEmailsAdded),
-            total_phones_added: Math.max(0, totalPhonesAdded),
-            enrichment_sources: [
-                ...(rocketreachSuccess ? ['rocketreach'] : []),
-                ...(apolloSuccess ? ['apollo'] : [])
-            ]
-        };
-        
-        // Return final contact with metadata
-        const finalContact = {
-            ...mergedData,
-            enrichment_metadata: enrichmentMetadata
-        };
-        
-        console.log(`[${requestId}] Enrichment completed in ${enrichmentTime}ms: +${totalEmailsAdded} emails, +${totalPhonesAdded} phones`);
-        return finalContact;
-        
-    } catch (error) {
-        console.error(`[${requestId}] Error during enrichment:`, error);
-        
-        // Return original contact with error metadata
-        return {
-            ...contact,
-            enrichment_metadata: {
-                enriched_at: new Date().toISOString(),
-                enrichment_time_ms: Date.now() - enrichmentStartTime,
-                rocketreach_success: false,
-                apollo_success: false,
-                total_emails_added: 0,
-                total_phones_added: 0,
-                error: error.message,
-                enrichment_sources: []
-            }
-        };
-    }
-}
+// COMMENTED OUT FOR POTENTIAL REUSE - Original enrichContactWithApis function
+// /**
+//  * Enrich contact data by calling both RocketReach and Apollo.io APIs in parallel
+//  * @param {Object} contact - Original contact data
+//  * @param {string} requestId - Request ID for logging correlation
+//  * @returns {Promise<Object>} - Enriched contact with merged data
+//  */
+// async function enrichContactWithApis(contact, requestId) {
+//     const enrichmentStartTime = Date.now();
+//     
+//     try {
+//         // Make parallel API calls to available services
+//         console.log(`[${requestId}] Starting parallel enrichment for ${contact.first_name} ${contact.last_name}`);
+//         
+//         const promises = [];
+//         if (apiKeyCache.rocketreach) {
+//             promises.push(rocketreachSearch(contact, apiKeyCache.rocketreach, requestId));
+//         } else {
+//             promises.push(Promise.resolve(null));
+//         }
+//         
+//         if (apiKeyCache.apollo) {
+//             promises.push(apolloSearch(contact, apiKeyCache.apollo, requestId));
+//         } else {
+//             promises.push(Promise.resolve(null));
+//         }
+//         
+//         const [rocketreachResult, apolloResult] = await Promise.allSettled(promises);
+//         
+//         // Process RocketReach results
+//         let rocketreachData = null;
+//         let rocketreachSuccess = false;
+//         if (rocketreachResult.status === 'fulfilled' && rocketreachResult.value) {
+//             rocketreachData = rocketreachResult.value;
+//             rocketreachSuccess = true;
+//         } else if (rocketreachResult.status === 'rejected') {
+//             console.error(`[${requestId}] RocketReach API failed:`, rocketreachResult.reason);
+//         }
+//         
+//         // Process Apollo.io results
+//         let apolloData = null;
+//         let apolloSuccess = false;
+//         if (apolloResult.status === 'fulfilled' && apolloResult.value) {
+//             apolloData = apolloResult.value;
+//             apolloSuccess = true;
+//         } else if (apolloResult.status === 'rejected') {
+//             console.error(`[${requestId}] Apollo.io API failed:`, apolloResult.reason);
+//         }
+//         
+//         // Merge enrichment data
+//         const mergedData = mergeEnrichmentData(contact, rocketreachData, apolloData, requestId);
+//         
+//         // Calculate enrichment metrics
+//         const enrichmentTime = Date.now() - enrichmentStartTime;
+//         const totalEmailsAdded = mergedData.emails ? mergedData.emails.length - (contact.emails ? contact.emails.length : 0) : 0;
+//         const totalPhonesAdded = mergedData.phones ? mergedData.phones.length - (contact.phones ? contact.phones.length : 0) : 0;
+//         
+//         // Create enrichment metadata separately
+//         const enrichmentMetadata = {
+//             enriched_at: new Date().toISOString(),
+//             enrichment_time_ms: enrichmentTime,
+//             rocketreach_success: rocketreachSuccess,
+//             apollo_success: apolloSuccess,
+//             total_emails_added: Math.max(0, totalEmailsAdded),
+//             total_phones_added: Math.max(0, totalPhonesAdded),
+//             enrichment_sources: [
+//                 ...(rocketreachSuccess ? ['rocketreach'] : []),
+//                 ...(apolloSuccess ? ['apollo'] : [])
+//             ]
+//         };
+//         
+//         // Return final contact with metadata
+//         const finalContact = {
+//             ...mergedData,
+//             enrichment_metadata: enrichmentMetadata
+//         };
+//         
+//         console.log(`[${requestId}] Enrichment completed in ${enrichmentTime}ms: +${totalEmailsAdded} emails, +${totalPhonesAdded} phones`);
+//         return finalContact;
+//         
+//     } catch (error) {
+//         console.error(`[${requestId}] Error during enrichment:`, error);
+//         
+//         // Return original contact with error metadata
+//         return {
+//             ...contact,
+//             enrichment_metadata: {
+//                 enriched_at: new Date().toISOString(),
+//                 enrichment_time_ms: Date.now() - enrichmentStartTime,
+//                 rocketreach_success: false,
+//                 apollo_success: false,
+//                 total_emails_added: 0,
+//                 total_phones_added: 0,
+//                 error: error.message,
+//                 enrichment_sources: []
+//             }
+//         };
+//     }
+// }
 
 /**
  * Merge enrichment data from multiple sources with deduplication and prioritization

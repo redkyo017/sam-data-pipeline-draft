@@ -21,6 +21,7 @@ export const handler = async (event, context) => {
     
     let campaign_id = "default-campaign";
     let commit_id = null;
+    let executionId = null;
     
     try {
         // Validate environment variables
@@ -28,12 +29,15 @@ export const handler = async (event, context) => {
             throw new Error('BUCKET_NAME environment variable not set');
         }
         
-        // Extract campaign and commit IDs from event
+        // Extract campaign, commit IDs and executionId from event
         if (event.campaign_id) {
             campaign_id = event.campaign_id;
         }
         if (event.commit_id) {
             commit_id = event.commit_id;
+        }
+        if (event.executionId) {
+            executionId = event.executionId;
         }
         
         console.log(`[${requestId}] Starting merge process`, {
@@ -59,7 +63,7 @@ export const handler = async (event, context) => {
         const mergedData = await mergeIndividualFiles(individualFiles, requestId);
         
         // Write merged file to S3
-        const outputKey = await writeMergedFile(mergedData, campaign_id, commit_id, requestId);
+        const outputKey = await writeMergedFile(mergedData, campaign_id, commit_id, executionId, requestId);
         
         // Cleanup individual files
         await cleanupIndividualFiles(individualFiles, requestId);
@@ -208,30 +212,30 @@ async function mergeIndividualFiles(fileKeys, requestId) {
  * @param {Array} mergedData - Array of merged contact records
  * @param {string} campaignId - Campaign ID
  * @param {string} commitId - Commit ID
+ * @param {string} executionId - Execution ID for consistent naming
  * @param {string} requestId - Request ID for logging
  * @returns {Promise<string>} - S3 key of the merged file
  */
-async function writeMergedFile(mergedData, campaignId, commitId, requestId) {
+async function writeMergedFile(mergedData, campaignId, commitId, executionId, requestId) {
     try {
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const outputKey = `data/enriched/${campaignId}/${commitId}/merged/enriched-contacts-${timestamp}.json`;
+        // Use consistent naming format: campaigns/{campaign_id}/{commit_id}/{execution_id}.json
+        const outputKey = `campaigns/${campaignId}/${commitId}/${executionId}.json`;
         
-        const outputData = {
-            metadata: {
-                campaign_id: campaignId,
-                commit_id: commitId,
-                total_records: mergedData.length,
-                merged_at: new Date().toISOString(),
-                processing_summary: generateProcessingSummary(mergedData)
-            },
-            contacts: mergedData
-        };
+        // Create structured data response to match merge-csv-data format
+        const structuredDataResponse = mergedData.map(item => {
+            // Remove file_key field if it exists
+            const { file_key, ...cleanedItem } = item;
+            return {
+                type: "updated",
+                data: cleanedItem
+            };
+        });
         
         const putCommand = new PutObjectCommand({
             Bucket: process.env.BUCKET_NAME,
             Key: outputKey,
-            Body: JSON.stringify(outputData, null, 2),
-            ContentType: 'application/json',
+            Body: JSON.stringify(structuredDataResponse, null, 2),
+            ContentType: 'application/json; charset=utf-8',
             Metadata: {
                 'campaign-id': campaignId,
                 'commit-id': commitId || 'unknown',
@@ -251,52 +255,53 @@ async function writeMergedFile(mergedData, campaignId, commitId, requestId) {
     }
 }
 
-/**
- * Generate processing summary from merged data
- * @param {Array} mergedData - Array of contact records
- * @returns {Object} - Processing summary statistics
- */
-function generateProcessingSummary(mergedData) {
-    const summary = {
-        total_contacts: mergedData.length,
-        enrichment_stats: {
-            rocketreach_success: 0,
-            apollo_success: 0,
-            both_sources_success: 0,
-            no_enrichment: 0
-        },
-        contact_data: {
-            total_emails_added: 0,
-            total_phones_added: 0,
-            contacts_with_new_emails: 0,
-            contacts_with_new_phones: 0
-        }
-    };
-    
-    mergedData.forEach(contact => {
-        if (contact.enrichment_metadata) {
-            const meta = contact.enrichment_metadata;
-            
-            // Track enrichment source success
-            if (meta.rocketreach_success) summary.enrichment_stats.rocketreach_success++;
-            if (meta.apollo_success) summary.enrichment_stats.apollo_success++;
-            if (meta.rocketreach_success && meta.apollo_success) summary.enrichment_stats.both_sources_success++;
-            if (!meta.rocketreach_success && !meta.apollo_success) summary.enrichment_stats.no_enrichment++;
-            
-            // Track contact data additions
-            if (meta.total_emails_added > 0) {
-                summary.contact_data.total_emails_added += meta.total_emails_added;
-                summary.contact_data.contacts_with_new_emails++;
-            }
-            if (meta.total_phones_added > 0) {
-                summary.contact_data.total_phones_added += meta.total_phones_added;
-                summary.contact_data.contacts_with_new_phones++;
-            }
-        }
-    });
-    
-    return summary;
-}
+// COMMENTED OUT FOR POTENTIAL REUSE - Original processing summary function
+// /**
+//  * Generate processing summary from merged data
+//  * @param {Array} mergedData - Array of contact records
+//  * @returns {Object} - Processing summary statistics
+//  */
+// function generateProcessingSummary(mergedData) {
+//     const summary = {
+//         total_contacts: mergedData.length,
+//         enrichment_stats: {
+//             rocketreach_success: 0,
+//             apollo_success: 0,
+//             both_sources_success: 0,
+//             no_enrichment: 0
+//         },
+//         contact_data: {
+//             total_emails_added: 0,
+//             total_phones_added: 0,
+//             contacts_with_new_emails: 0,
+//             contacts_with_new_phones: 0
+//         }
+//     };
+//     
+//     mergedData.forEach(contact => {
+//         if (contact.enrichment_metadata) {
+//             const meta = contact.enrichment_metadata;
+//             
+//             // Track enrichment source success
+//             if (meta.rocketreach_success) summary.enrichment_stats.rocketreach_success++;
+//             if (meta.apollo_success) summary.enrichment_stats.apollo_success++;
+//             if (meta.rocketreach_success && meta.apollo_success) summary.enrichment_stats.both_sources_success++;
+//             if (!meta.rocketreach_success && !meta.apollo_success) summary.enrichment_stats.no_enrichment++;
+//             
+//             // Track contact data additions
+//             if (meta.total_emails_added > 0) {
+//                 summary.contact_data.total_emails_added += meta.total_emails_added;
+//                 summary.contact_data.contacts_with_new_emails++;
+//             }
+//             if (meta.total_phones_added > 0) {
+//                 summary.contact_data.total_phones_added += meta.total_phones_added;
+//                 summary.contact_data.contacts_with_new_phones++;
+//             }
+//         }
+//     });
+//     
+//     return summary;
+// }
 
 /**
  * Clean up individual files after successful merge
