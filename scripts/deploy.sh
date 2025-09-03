@@ -2,7 +2,13 @@
 
 # Enhanced Deployment script for SAM Data Pipeline with Environment Support
 # Usage: ./scripts/deploy.sh [environment] [openai-api-key]
-# Supported environments: staging, production (defaults to staging if not specified)
+# Supported environments: dev, staging, production (defaults to staging if not specified)
+# 
+# Prerequisites:
+# - AWS credentials configured
+# - For enrichment pipeline: RocketReach and Apollo.io API keys must be set in Parameter Store
+#   aws ssm put-parameter --name "/enrichment/rocketreach-api-key" --value "your-key" --type "SecureString"
+#   aws ssm put-parameter --name "/enrichment/apollo-api-key" --value "your-key" --type "SecureString"
 
 set -e
 
@@ -83,6 +89,24 @@ fi
 echo "📋 Validating SAM template..."
 sam validate --region ${REGION}
 
+# Check Parameter Store for enrichment API keys (optional)
+echo "🔍 Checking Parameter Store for enrichment API keys..."
+MISSING_PARAMS=""
+if ! aws ssm get-parameter --name "/enrichment/rocketreach-api-key" --region ${REGION} > /dev/null 2>&1; then
+    MISSING_PARAMS="${MISSING_PARAMS}  - /enrichment/rocketreach-api-key\n"
+fi
+if ! aws ssm get-parameter --name "/enrichment/apollo-api-key" --region ${REGION} > /dev/null 2>&1; then
+    MISSING_PARAMS="${MISSING_PARAMS}  - /enrichment/apollo-api-key\n"
+fi
+
+if [ -n "$MISSING_PARAMS" ]; then
+    echo "⚠️  Warning: Missing Parameter Store keys for enrichment pipeline:"
+    echo -e "$MISSING_PARAMS"
+    echo "💡 To set up enrichment API keys, see: docs/ENRICHMENT-SETUP.md"
+    echo "   Deployment will continue, but enrichment pipeline will not function without these keys."
+    echo ""
+fi
+
 # Build the application
 echo "🔨 Building SAM application..."
 sam build
@@ -135,8 +159,13 @@ aws cloudformation describe-stacks \
 echo ""
 echo "🎉 ${ENVIRONMENT^} environment is ready!"
 echo ""
+echo "Available endpoints:"
+echo "  📥 Ingestion: /pipelines/ingestion/executions"
+echo "  🔍 Enrichment: /pipelines/enrichment/executions"
+echo ""
 echo "Next steps:"
-echo "  1. Test the API endpoint shown above"
-echo "  2. Upload test data to the input bucket"
-echo "  3. Monitor CloudWatch logs for execution details"
-echo "  4. Check SQS dead letter queues for any failures"
+echo "  1. Test the API endpoints shown above"
+echo "  2. Upload test data to the input bucket"  
+echo "  3. For enrichment: Ensure API keys are set in Parameter Store (see docs/ENRICHMENT-SETUP.md)"
+echo "  4. Monitor CloudWatch logs for execution details"
+echo "  5. Check SQS dead letter queues for any failures"

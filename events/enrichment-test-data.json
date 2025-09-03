@@ -1,0 +1,94 @@
+[
+  {
+    "campaign_id": "test-campaign-123",
+    "commit_id": "commit-abc456",
+    "first_name": "John",
+    "last_name": "Doe",
+    "company_name": "Tech Solutions Inc",
+    "job_title": "Software Engineer",
+    "country": "United States",
+    "linkedin_url": "https://www.linkedin.com/in/johndoe",
+    "address1": "123 Main Street",
+    "address2": "Suite 100",
+    "city": "San Francisco",
+    "state": "CA",
+    "zip_code": "94102",
+    "status": "created",
+    "emails": [
+      {
+        "email": "john.doe@techsolutions.com",
+        "priority": 1
+      }
+    ],
+    "phones": [
+      {
+        "phone": "+1-555-123-4567",
+        "priority": 1
+      }
+    ]
+  },
+  {
+    "campaign_id": "test-campaign-123",
+    "commit_id": "commit-abc456",
+    "first_name": "Jane",
+    "last_name": "Smith",
+    "company_name": "Global Corp",
+    "job_title": "Product Manager",
+    "country": "United States",
+    "linkedin_url": "https://www.linkedin.com/in/janesmith",
+    "address1": "456 Oak Avenue",
+    "address2": "",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10001",
+    "status": "created",
+    "emails": [
+      {
+        "email": "j.smith@globalcorp.com",
+        "priority": 1
+      },
+      {
+        "email": "jane.smith@personal.com",
+        "priority": 2
+      }
+    ],
+    "phones": [
+      {
+        "phone": "+1-555-987-6543",
+        "priority": 1
+      },
+      {
+        "phone": "+1-555-111-2222",
+        "priority": 2
+      }
+    ]
+  },
+  {
+    "campaign_id": "test-campaign-123",
+    "commit_id": "commit-abc456",
+    "first_name": "Michael",
+    "last_name": "Johnson",
+    "company_name": "StartupCo",
+    "job_title": "CEO",
+    "country": "United States",
+    "linkedin_url": "https://www.linkedin.com/in/michaeljohnson",
+    "address1": "789 Innovation Drive",
+    "address2": "Floor 3",
+    "city": "Austin",
+    "state": "TX",
+    "zip_code": "73301",
+    "status": "created",
+    "emails": [
+      {
+        "email": "mike@startupco.com",
+        "priority": 1
+      }
+    ],
+    "phones": [
+      {
+        "phone": "+1-555-444-7777",
+        "priority": 1
+      }
+    ]
+  }
+]

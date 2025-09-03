@@ -1,0 +1,30 @@
+{
+  "Items": [
+    {
+      "campaign_id": "test-campaign-123",
+      "commit_id": "test-commit-456",
+      "items": [
+        {
+          "first_name": "John",
+          "last_name": "Doe",
+          "company_name": "Test Corp",
+          "job_title": "Software Engineer",
+          "city": "San Francisco",
+          "state": "CA",
+          "emails": [],
+          "phones": []
+        },
+        {
+          "first_name": "Jane",
+          "last_name": "Smith",
+          "company_name": "Example Inc",
+          "job_title": "Product Manager",
+          "city": "New York",
+          "state": "NY",
+          "emails": [],
+          "phones": []
+        }
+      ]
+    }
+  ]
+}

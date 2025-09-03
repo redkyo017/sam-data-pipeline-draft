@@ -18,8 +18,6 @@ const s3 = new S3Client({});
 // Transform input data to OUTPUT_DATA_STRUCTURE format
 const transformToOutputStructure = (inputData, campaign_id, commit_id) => {
   return {
-    type: "created",
-    data: {
       campaign_id: campaign_id || inputData.campaign_id || "",
       commit_id: commit_id || inputData.commit_id || "",
       first_name: inputData.first_name || "",
@@ -36,7 +34,6 @@ const transformToOutputStructure = (inputData, campaign_id, commit_id) => {
       status: inputData.status || "created",
       emails: inputData.email ? [{ value: inputData.email, priority: 1 }] : [],
       phones: inputData.phone ? [{ value: inputData.phone, priority: 1 }] : [],
-    },
   };
 };
 
@@ -326,13 +323,19 @@ export const handler = async (event = {}) => {
 
     // Deduplicate records based on first_name, last_name, and linkedin_url
     console.log(`Total records before deduplication: ${allData.length}`);
-    const deduplicatedData = deduplicateRecords(allData);
+    const deduplicatedData = deduplicateRecords(allData) || [];
     console.log(
       `Total records after deduplication: ${deduplicatedData.length}`,
     );
 
     // Create merged JSON content
-    const mergedJsonBody = JSON.stringify(deduplicatedData, null, 2);
+    const structuredDataResponse = deduplicatedData.map(item => {
+      return {
+        type: "created",
+        data: item
+      }
+    })
+    const mergedJsonBody = JSON.stringify(structuredDataResponse, null, 2);
 
     // Upload merged JSON file
     await s3.send(

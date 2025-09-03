@@ -1,0 +1,16 @@
+{
+  "name": "nodejs-enrichment-merger",
+  "version": "1.0.0",
+  "description": "Merges individual enriched contact JSON files from distributed map execution",
+  "main": "src/index.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["merge", "enrichment", "json", "aggregation"],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.0.0"
+  }
+}

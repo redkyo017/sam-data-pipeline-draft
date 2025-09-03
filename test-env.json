@@ -1,0 +1,9 @@
+{
+  "EnrichmentProcessorFunction": {
+    "ROCKETREACH_STAGING_KEY": "your_rocketreach_test_key_here",
+    "APOLLO_STAGING_KEY": "your_apollo_test_key_here",
+    "BUCKET_NAME": "test-bucket",
+    "ROCKETREACH_API_KEY_PARAM": "/test/rocketreach-key",
+    "APOLLO_API_KEY_PARAM": "/test/apollo-key"
+  }
+}

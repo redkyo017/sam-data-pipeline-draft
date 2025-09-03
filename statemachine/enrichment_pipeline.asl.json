@@ -1,5 +1,5 @@
 {
-    "Comment": "An ingestion pipeline that gets triggered by API GW",
+    "Comment": "An enrichment pipeline that processes contact data with RocketReach and Apollo.io APIs",
     "StartAt": "Generate Commit ID",
     "States": {
         "Generate Commit ID": {
@@ -13,9 +13,9 @@
                 "Key.$": "$.key",
                 "campaign_id.$": "$.campaign_id"
             },
-            "Next": "S3 CSV file Ingestion"
+            "Next": "S3 JSON file Enrichment"
         },
-        "S3 CSV file Ingestion": {
+        "S3 JSON file Enrichment": {
             "Type": "Map",
             "Assign": {
                 "campaign_id.$": "$campaign_id",
@@ -31,81 +31,16 @@
                     "Mode": "DISTRIBUTED",
                     "ExecutionType": "STANDARD"
                 },
-                "StartAt": "Validate input format",
+                "StartAt": "Enrich Contact Data",
                 "States": {
-                    "Validate input format": {
+                    "Enrich Contact Data": {
                         "Type": "Task",
                         "Resource": "arn:aws:states:::lambda:invoke",
-                        "ResultPath": "$.validation",
+                        "ResultPath": "$.enrichment",
                         "Parameters": {
-                            "FunctionName": "${ValidateRawValidFormatFunctionArn}",
+                            "FunctionName": "${EnrichmentProcessorFunctionArn}",
                             "Payload.$": "$"
                         },
-                        "Catch": [
-                            {
-                                "ErrorEquals": ["States.ALL"],
-                                "Next": "Prepare Failure Message",
-                                "ResultPath": "$.error"
-                            }
-                        ],
-                        "Next": "Choice"
-                    },
-                    "Choice": {
-                        "Type": "Choice",
-                        "Choices": [
-                            {
-                                "Variable": "$.validation.Payload.isValidInputFormat",
-                                "BooleanEquals": true,
-                                "Next": "Mapping to output format"
-                            }
-                        ],
-                        "Default": "Standardize with OpenAI"
-                    },
-                    "Mapping to output format": {
-                        "Type": "Task",
-                        "Resource": "arn:aws:states:::lambda:invoke",
-                        "ResultPath": "$.standardization",
-                        "Parameters": {
-                            "FunctionName": "${MappingRawValidInputFunctionArn}",
-                            "Payload.$": "$"
-                        },
-                        "Catch": [
-                            {
-                                "ErrorEquals": ["States.ALL"],
-                                "Next": "Prepare Failure Message",
-                                "ResultPath": "$.error"
-                            }
-                        ],
-                        "Next": "Process standardized data"
-                    },
-                    "Standardize with OpenAI": {
-                        "Type": "Task",
-                        "Resource": "arn:aws:states:::lambda:invoke",
-                        "ResultPath": "$.standardization",
-                        "Parameters": {
-                            "FunctionName": "${StandardizationFunctionArn}",
-                            "Payload.$": "$"
-                        },
-                        "Catch": [
-                            {
-                                "ErrorEquals": ["States.ALL"],
-                                "Next": "Prepare Failure Message",
-                                "ResultPath": "$.error"
-                            }
-                        ],
-                        "Next": "Process standardized data"
-                    },
-                    "Process standardized data": {
-                        "Type": "Task",
-                        "Resource": "arn:aws:states:::lambda:invoke",
-                        "Parameters": {
-                            "FunctionName": "${ProcessStandardizedDataFunctionArn}",
-                            "Payload": {
-                                "data.$": "$",
-                                "executionId.$": "$$.Execution.Name"
-                            }
-                        },
-                        "OutputPath": "$.Payload",
                         "Catch": [
                             {
                                 "ErrorEquals": ["States.ALL"],
@@ -126,7 +61,7 @@
                                 "current.$": "States.ArrayLength($.Items)",
                                 "total": -1,
                                 "status": "failed",
-                                "pipeline": "ingestion",
+                                "pipeline": "enrichment",
                                 "error": {
                                     "cause.$": "$.error.Cause",
                                     "error.$": "$.error.Error"
@@ -150,8 +85,7 @@
             "ItemReader": {
                 "Resource": "arn:aws:states:::s3:getObject",
                 "ReaderConfig": {
-                    "InputType": "CSV",
-                    "CSVHeaderLocation": "FIRST_ROW"
+                    "InputType": "JSON"
                 },
                 "Parameters": {
                     "Bucket.$": "$.Bucket",
@@ -159,11 +93,11 @@
                 }
             },
             "MaxConcurrency": ${MaxConcurrency},
-            "Label": "S3CSVfileIngestion",
+            "Label": "S3JSONfileEnrichment",
             "ToleratedFailurePercentage": 100,
             "ToleratedFailureCount": 10000,
             "ItemBatcher": {
-                "MaxItemsPerBatch": 15
+                "MaxItemsPerBatch": 100
             },
             "Next": "Prepare Execution Summary",
             "Catch": [
@@ -185,7 +119,7 @@
                     "current.$": "States.ArrayLength($)",
                     "total.$": "States.ArrayLength($)",
                     "status": "completed",
-                    "pipeline": "ingestion",
+                    "pipeline": "enrichment",
                     "metadata": {
                         "type": "EXECUTION_SUMMARY",
                         "totalBatches.$": "States.ArrayLength($)"
@@ -214,20 +148,61 @@
                 "campaign_id.$": "$campaign_id",
                 "commit_id.$": "$commit_id"
             },
-            "Next": "Merge CSV Data"
+            "Next": "Merge Enriched Data"
         },
-        "Merge CSV Data": {
+        "Merge Enriched Data": {
             "Type": "Task",
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
-                "FunctionName": "${MergeCsvDataFunctionArn}",
+                "FunctionName": "${EnrichmentMergerFunctionArn}",
                 "Payload": {
                     "data.$": "$.data",
                     "executionId.$": "$$.Execution.Name",
-                    "campaign_id.$": "$campaign_id",
-                    "commit_id.$": "$commit_id"
+                    "campaign_id.$": "$.campaign_id",
+                    "commit_id.$": "$.commit_id"
                 }
             },
+            "Catch": [
+                {
+                    "ErrorEquals": ["States.ALL"],
+                    "Next": "Handle Merge Failure",
+                    "ResultPath": "$.mergeError"
+                }
+            ],
+            "End": true
+        },
+        "Handle Merge Failure": {
+            "Type": "Pass",
+            "Parameters": {
+                "failureMessage": {
+                    "execution_id.$": "$$.Execution.Name",
+                    "campaign_id.$": "$.campaign_id",
+                    "commit_id.$": "$.commit_id",
+                    "timestamp.$": "$$.State.EnteredTime",
+                    "current": -1,
+                    "total": -1,
+                    "status": "failed",
+                    "pipeline": "enrichment",
+                    "error": {
+                        "cause.$": "$.mergeError.Cause",
+                        "error.$": "$.mergeError.Error"
+                    },
+                    "metadata": {
+                        "type": "MERGE_FAILURE",
+                        "stage": "post-enrichment"
+                    }
+                }
+            },
+            "Next": "Send Merge Failure to SQS"
+        },
+        "Send Merge Failure to SQS": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::sqs:sendMessage",
+            "Parameters": {
+                "QueueUrl": "${BatchFailureQueueUrl}",
+                "MessageBody.$": "States.JsonToString($.failureMessage)"
+            },
+            "ResultPath": "$.sqsResult",
             "End": true
         }
     }

@@ -1,0 +1,3 @@
+{
+  "body": "{\"Bucket\": \"data-pipeline-output-dev-123456789\", \"Key\": \"campaigns/test-campaign-123/commits/commit-abc456/processed_data.json\"}"
+}
