@@ -1,0 +1,17 @@
+{
+  "Items": [
+    {
+      "campaign_id": "test-campaign-123",
+      "commit_id": "test-commit-456", 
+      "items": {
+        "id": "contact-1",
+        "first_name": "John",
+        "last_name": "Doe",
+        "company_name": "Test Company",
+        "job_title": "Software Engineer",
+        "emails": [],
+        "phones": []
+      }
+    }
+  ]
+}

@@ -8,6 +8,7 @@ import { searchContact as rocketreachSearch, searchContacts as rocketreachSearch
 import { searchContact as apolloSearch, searchContacts as apolloSearchIndividual, searchContactsBulk as apolloSearchBulk } from './apollo-api.mjs';
 import { writeEnrichedContactToS3 } from './s3-writer.mjs';
 import { ENRICH_DATA_STRUCTURE } from './enrich-data-structure.mjs';
+import { setApiKeyCache, processContactsSequentially, getAllVendorConfigs, updateVendorOrder } from './vendor-config.mjs';
 
 // Initialize AWS clients
 const ssmClient = new SSMClient({});
@@ -84,10 +85,16 @@ export const handler = async (event, context) => {
         // Load API keys from Parameter Store
         await loadApiKeys();
         
-        // Process contacts individually using individual APIs
-        console.log(`[${requestId}] Starting individual enrichment processing for ${batchItems.length} contacts`);
+        // Set API key cache in vendor configuration module
+        setApiKeyCache(apiKeyCache);
         
-        const individualEnrichmentResults = await enrichContactsWithIndividualApis(batchItems, requestId);
+        // Log vendor configuration
+        console.log(`[${requestId}] Vendor API configuration:`, getAllVendorConfigs());
+        
+        // Process contacts sequentially through vendor APIs
+        console.log(`[${requestId}] Starting sequential enrichment processing for ${batchItems.length} contacts`);
+        
+        const individualEnrichmentResults = await processContactsSequentially(batchItems, requestId);
         
         // Transform results to match ENRICH_DATA_STRUCTURE format
         const enrichedRecords = [];
@@ -288,113 +295,114 @@ async function loadApiKeys() {
     }
 }
 
-/**
- * Enrich multiple contacts using individual API calls
- * @param {Array} contacts - Array of contact objects
- * @param {string} requestId - Request ID for logging correlation
- * @returns {Promise<Array>} - Array of enrichment results
- */
-async function enrichContactsWithIndividualApis(contacts, requestId) {
-    const enrichmentStartTime = Date.now();
-    
-    try {
-        console.log(`[${requestId}] Starting individual enrichment for ${contacts.length} contacts`);
+// COMMENTED OUT FOR SEQUENTIAL PROCESSING - Original parallel processing function
+// /**
+//  * Enrich multiple contacts using individual API calls (PARALLEL - DEPRECATED)
+//  * @param {Array} contacts - Array of contact objects
+//  * @param {string} requestId - Request ID for logging correlation
+//  * @returns {Promise<Array>} - Array of enrichment results
+//  */
+// async function enrichContactsWithIndividualApis(contacts, requestId) {
+//     const enrichmentStartTime = Date.now();
+//     
+//     try {
+//         console.log(`[${requestId}] Starting individual enrichment for ${contacts.length} contacts`);
         
-        // Make individual API calls to both services (now processing individually)
-        const [rocketreachResults, apolloResults] = await Promise.allSettled([
-            apiKeyCache.rocketreach ? rocketreachSearchIndividual(contacts, apiKeyCache.rocketreach, requestId) : Promise.resolve(contacts.map(() => null)),
-            apiKeyCache.apollo ? apolloSearchIndividual(contacts, apiKeyCache.apollo, requestId) : Promise.resolve(contacts.map(() => null))
-        ]);
-        // Process RocketReach results
-        let rocketreachData = null;
-        let rocketreachSuccess = false;
-        if (rocketreachResults.status === 'fulfilled' && rocketreachResults.value) {
-            rocketreachData = rocketreachResults.value;
-            rocketreachSuccess = true;
-        } else if (rocketreachResults.status === 'rejected') {
-            console.error(`[${requestId}] RocketReach individual API failed:`, rocketreachResults.reason);
-        }
+//         // Make individual API calls to both services (now processing individually)
+//         const [rocketreachResults, apolloResults] = await Promise.allSettled([
+//             apiKeyCache.rocketreach ? rocketreachSearchIndividual(contacts, apiKeyCache.rocketreach, requestId) : Promise.resolve(contacts.map(() => null)),
+//             apiKeyCache.apollo ? apolloSearchIndividual(contacts, apiKeyCache.apollo, requestId) : Promise.resolve(contacts.map(() => null))
+//         ]);
+//         // Process RocketReach results
+//         let rocketreachData = null;
+//         let rocketreachSuccess = false;
+//         if (rocketreachResults.status === 'fulfilled' && rocketreachResults.value) {
+//             rocketreachData = rocketreachResults.value;
+//             rocketreachSuccess = true;
+//         } else if (rocketreachResults.status === 'rejected') {
+//             console.error(`[${requestId}] RocketReach individual API failed:`, rocketreachResults.reason);
+//         }
         
-        // Process Apollo.io results
-        let apolloData = null;
-        let apolloSuccess = false;
-        if (apolloResults.status === 'fulfilled' && apolloResults.value) {
-            apolloData = apolloResults.value;
-            apolloSuccess = true;
-        } else if (apolloResults.status === 'rejected') {
-            console.error(`[${requestId}] Apollo.io individual API failed:`, apolloResults.reason);
-        }
-        // Merge results for each contact
-        const results = [];
-        for (let i = 0; i < contacts.length; i++) {
-            const contact = contacts[i];
-            const contactStartTime = Date.now();
-            
-            try {
-                const rocketreachContactData = rocketreachSuccess && rocketreachData && rocketreachData[i] ? rocketreachData[i] : null;
-                const apolloContactData = apolloSuccess && apolloData && apolloData[i] ? apolloData[i] : null;
-                
-                // Merge enrichment data for this contact
-                const mergedData = mergeEnrichmentData(contact, rocketreachContactData, apolloContactData, requestId);
-                
-                // Calculate enrichment metrics
-                const contactProcessingTime = Date.now() - contactStartTime;
-                const totalEmailsAdded = mergedData.emails ? mergedData.emails.length - (contact.emails ? contact.emails.length : 0) : 0;
-                const totalPhonesAdded = mergedData.phones ? mergedData.phones.length - (contact.phones ? contact.phones.length : 0) : 0;
-                
-                // Create enrichment metadata separately
-                const enrichmentMetadata = {
-                    enriched_at: new Date().toISOString(),
-                    enrichment_time_ms: contactProcessingTime,
-                    rocketreach_success: !!rocketreachContactData,
-                    apollo_success: !!apolloContactData,
-                    total_emails_added: Math.max(0, totalEmailsAdded),
-                    total_phones_added: Math.max(0, totalPhonesAdded),
-                    enrichment_sources: [
-                        ...(rocketreachContactData ? ['rocketreach'] : []),
-                        ...(apolloContactData ? ['apollo'] : [])
-                    ]
-                };
-                
-                results.push({
-                    enrichedContact: mergedData,
-                    enrichmentMetadata: enrichmentMetadata,
-                    processingTime: contactProcessingTime
-                });
-                
-                // Log successful enrichment
-                if (i % 10 === 0 || totalEmailsAdded > 0 || totalPhonesAdded > 0) {
-                    console.log(`[${requestId}] Contact ${i + 1}/${contacts.length} enriched: +${totalEmailsAdded} emails, +${totalPhonesAdded} phones`);
-                }
-                
-            } catch (contactError) {
-                const contactProcessingTime = Date.now() - contactStartTime;
-                console.error(`[${requestId}] Error merging enrichment data for contact ${i + 1}:`, contactError.message);
-                
-                results.push({
-                    error: contactError.message,
-                    processingTime: contactProcessingTime
-                });
-            }
-        }
-        
-        const totalEnrichmentTime = Date.now() - enrichmentStartTime;
-        const successCount = results.filter(r => !r.error).length;
-        
-        console.log(`[${requestId}] Individual enrichment completed in ${totalEnrichmentTime}ms: ${successCount}/${contacts.length} contacts successful`);
-        return results;
-        
-    } catch (error) {
-        const totalEnrichmentTime = Date.now() - enrichmentStartTime;
-        console.error(`[${requestId}] Individual enrichment error after ${totalEnrichmentTime}ms:`, error);
-        
-        // Return error results for all contacts
-        return contacts.map(() => ({
-            error: error.message,
-            processingTime: totalEnrichmentTime / contacts.length
-        }));
-    }
-}
+//         // Process Apollo.io results
+//         let apolloData = null;
+//         let apolloSuccess = false;
+//         if (apolloResults.status === 'fulfilled' && apolloResults.value) {
+//             apolloData = apolloResults.value;
+//             apolloSuccess = true;
+//         } else if (apolloResults.status === 'rejected') {
+//             console.error(`[${requestId}] Apollo.io individual API failed:`, apolloResults.reason);
+//         }
+//         // Merge results for each contact
+//         const results = [];
+//         for (let i = 0; i < contacts.length; i++) {
+//             const contact = contacts[i];
+//             const contactStartTime = Date.now();
+//             
+//             try {
+//                 const rocketreachContactData = rocketreachSuccess && rocketreachData && rocketreachData[i] ? rocketreachData[i] : null;
+//                 const apolloContactData = apolloSuccess && apolloData && apolloData[i] ? apolloData[i] : null;
+//                 
+//                 // Merge enrichment data for this contact
+//                 const mergedData = mergeEnrichmentData(contact, rocketreachContactData, apolloContactData, requestId);
+//                 
+//                 // Calculate enrichment metrics
+//                 const contactProcessingTime = Date.now() - contactStartTime;
+//                 const totalEmailsAdded = mergedData.emails ? mergedData.emails.length - (contact.emails ? contact.emails.length : 0) : 0;
+//                 const totalPhonesAdded = mergedData.phones ? mergedData.phones.length - (contact.phones ? contact.phones.length : 0) : 0;
+//                 
+//                 // Create enrichment metadata separately
+//                 const enrichmentMetadata = {
+//                     enriched_at: new Date().toISOString(),
+//                     enrichment_time_ms: contactProcessingTime,
+//                     rocketreach_success: !!rocketreachContactData,
+//                     apollo_success: !!apolloContactData,
+//                     total_emails_added: Math.max(0, totalEmailsAdded),
+//                     total_phones_added: Math.max(0, totalPhonesAdded),
+//                     enrichment_sources: [
+//                         ...(rocketreachContactData ? ['rocketreach'] : []),
+//                         ...(apolloContactData ? ['apollo'] : [])
+//                     ]
+//                 };
+//                 
+//                 results.push({
+//                     enrichedContact: mergedData,
+//                     enrichmentMetadata: enrichmentMetadata,
+//                     processingTime: contactProcessingTime
+//                 });
+//                 
+//                 // Log successful enrichment
+//                 if (i % 10 === 0 || totalEmailsAdded > 0 || totalPhonesAdded > 0) {
+//                     console.log(`[${requestId}] Contact ${i + 1}/${contacts.length} enriched: +${totalEmailsAdded} emails, +${totalPhonesAdded} phones`);
+//                 }
+//                 
+//             } catch (contactError) {
+//                 const contactProcessingTime = Date.now() - contactStartTime;
+//                 console.error(`[${requestId}] Error merging enrichment data for contact ${i + 1}:`, contactError.message);
+//                 
+//                 results.push({
+//                     error: contactError.message,
+//                     processingTime: contactProcessingTime
+//                 });
+//             }
+//         }
+//         
+//         const totalEnrichmentTime = Date.now() - enrichmentStartTime;
+//         const successCount = results.filter(r => !r.error).length;
+//         
+//         console.log(`[${requestId}] Individual enrichment completed in ${totalEnrichmentTime}ms: ${successCount}/${contacts.length} contacts successful`);
+//         return results;
+//         
+//     } catch (error) {
+//         const totalEnrichmentTime = Date.now() - enrichmentStartTime;
+//         console.error(`[${requestId}] Individual enrichment error after ${totalEnrichmentTime}ms:`, error);
+//         
+//         // Return error results for all contacts
+//         return contacts.map(() => ({
+//             error: error.message,
+//             processingTime: totalEnrichmentTime / contacts.length
+//         }));
+//     }
+// }
 
 // COMMENTED OUT FOR POTENTIAL REUSE - Original enrichContactWithApis function
 // /**
