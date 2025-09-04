@@ -1,12 +1,14 @@
 #!/bin/bash
 
 # Enhanced Deployment script for SAM Data Pipeline with Environment Support
-# Usage: ./scripts/deploy.sh [environment] [openai-api-key]
+# Usage: ./scripts/deploy.sh [environment] [openai-api-key] [rocketreach-api-key] [apollo-api-key]
 # Supported environments: dev, staging, production (defaults to staging if not specified)
 # 
 # Prerequisites:
 # - AWS credentials configured
-# - For enrichment pipeline: RocketReach and Apollo.io API keys must be set in Parameter Store
+# - API keys can be provided as parameters OR set in Parameter Store OR in .env file
+# 
+# Parameter Store setup (optional - keys can be passed directly):
 #   aws ssm put-parameter --name "/enrichment/rocketreach-api-key" --value "your-key" --type "SecureString"
 #   aws ssm put-parameter --name "/enrichment/apollo-api-key" --value "your-key" --type "SecureString"
 
@@ -20,31 +22,55 @@ if [ -f .env ]; then
     set +a  # Stop automatically exporting
 fi
 
-# Configuration
+# Configuration - Fixed parameter expansion
 ENVIRONMENT=${1:-staging}
 OPENAI_API_KEY=${2:-$OPENAI_API_KEY}
+
+# Fix: Use proper nested parameter expansion
+ROCKETREACH_API_KEY=${3:-${ROCKETREACH_API_KEY:-${ROCKETREACH_STAGING_KEY:-""}}}
+APOLLO_API_KEY=${4:-${APOLLO_API_KEY:-${APOLLO_STAGING_KEY:-""}}}
+
+# Debug: Show API key status (first 8 characters only for security)
+if [ "${DEBUG:-false}" = "true" ]; then
+    echo "🐛 DEBUG: API Key Status"
+    echo "  ROCKETREACH_API_KEY: ${ROCKETREACH_API_KEY:0:8}... (length: ${#ROCKETREACH_API_KEY})"
+    echo "  APOLLO_API_KEY: ${APOLLO_API_KEY:0:8}... (length: ${#APOLLO_API_KEY})"
+    echo "  OPENAI_API_KEY: ${OPENAI_API_KEY:0:8}... (length: ${#OPENAI_API_KEY})"
+    echo ""
+fi
 
 # Validate environment
 if [[ ! "$ENVIRONMENT" =~ ^(dev|staging|production)$ ]]; then
     echo "❌ Error: Invalid environment '$ENVIRONMENT'"
     echo "Valid environments: dev, staging, production"
-    echo "Usage: ./scripts/deploy.sh [environment] [openai-api-key]"
+    echo "Usage: ./scripts/deploy.sh [environment] [openai-api-key] [rocketreach-api-key] [apollo-api-key]"
     exit 1
 fi
 
-# Check for OpenAI API Key
+# Check for required API Keys
 if [ -z "$OPENAI_API_KEY" ]; then
     echo "❌ Error: OpenAI API Key is required"
-    echo "Usage: ./scripts/deploy.sh [environment] [openai-api-key]"
+    echo "Usage: ./scripts/deploy.sh [environment] [openai-api-key] [rocketreach-api-key] [apollo-api-key]"
     echo ""
     echo "Examples:"
-    echo "  ./scripts/deploy.sh dev \$OPENAI_API_KEY"
+    echo "  # Pass all keys as parameters"
+    echo "  ./scripts/deploy.sh dev \$OPENAI_API_KEY \$ROCKETREACH_API_KEY \$APOLLO_API_KEY"
+    echo "  # Use keys from .env file"
+    echo "  ./scripts/deploy.sh dev"
+    echo "  # Mix: required key as parameter, optional keys from .env"
     echo "  ./scripts/deploy.sh staging \$OPENAI_API_KEY"
-    echo "  ./scripts/deploy.sh production \$OPENAI_API_KEY_PROD"
-    echo "  ./scripts/deploy.sh dev  # Uses OPENAI_API_KEY from .env"
     echo ""
-    echo "💡 Tip: Set OPENAI_API_KEY in .env file to avoid passing it as parameter"
+    echo "💡 Tip: Set API keys in .env file to avoid passing them as parameters"
     exit 1
+fi
+
+# Validate enrichment API keys (at least one should be available)
+if [ -z "$ROCKETREACH_API_KEY" ] && [ -z "$APOLLO_API_KEY" ]; then
+    echo "⚠️  Warning: No enrichment API keys provided"
+    echo "   - RocketReach and Apollo API keys not found in parameters or .env file"
+    echo "   - Enrichment pipeline will fall back to Parameter Store or be disabled"
+    echo "   - To provide keys: ./scripts/deploy.sh $ENVIRONMENT \$OPENAI_API_KEY \$ROCKETREACH_KEY \$APOLLO_KEY"
+    echo ""
 fi
 
 # Environment-specific configurations (from samconfig.toml)
@@ -89,21 +115,41 @@ fi
 echo "📋 Validating SAM template..."
 sam validate --region ${REGION}
 
-# Check Parameter Store for enrichment API keys (optional)
-echo "🔍 Checking Parameter Store for enrichment API keys..."
-MISSING_PARAMS=""
-if ! aws ssm get-parameter --name "/enrichment/rocketreach-api-key" --region ${REGION} > /dev/null 2>&1; then
-    MISSING_PARAMS="${MISSING_PARAMS}  - /enrichment/rocketreach-api-key\n"
-fi
-if ! aws ssm get-parameter --name "/enrichment/apollo-api-key" --region ${REGION} > /dev/null 2>&1; then
-    MISSING_PARAMS="${MISSING_PARAMS}  - /enrichment/apollo-api-key\n"
+# Check enrichment API key availability
+echo "🔍 Checking enrichment API key availability..."
+KEY_STATUS=""
+KEYS_AVAILABLE=false
+
+# Check direct parameters/env vars
+if [ -n "$ROCKETREACH_API_KEY" ]; then
+    KEY_STATUS="${KEY_STATUS}✅ RocketReach: Provided as parameter/env var\n"
+    KEYS_AVAILABLE=true
+else
+    # Check Parameter Store fallback
+    if aws ssm get-parameter --name "/enrichment/rocketreach-api-key" --region ${REGION} > /dev/null 2>&1; then
+        KEY_STATUS="${KEY_STATUS}✅ RocketReach: Available in Parameter Store\n"
+        KEYS_AVAILABLE=true
+    else
+        KEY_STATUS="${KEY_STATUS}❌ RocketReach: Not available (parameter or Parameter Store)\n"
+    fi
 fi
 
-if [ -n "$MISSING_PARAMS" ]; then
-    echo "⚠️  Warning: Missing Parameter Store keys for enrichment pipeline:"
-    echo -e "$MISSING_PARAMS"
-    echo "💡 To set up enrichment API keys, see: docs/ENRICHMENT-SETUP.md"
-    echo "   Deployment will continue, but enrichment pipeline will not function without these keys."
+if [ -n "$APOLLO_API_KEY" ]; then
+    KEY_STATUS="${KEY_STATUS}✅ Apollo: Provided as parameter/env var\n"
+    KEYS_AVAILABLE=true  
+else
+    # Check Parameter Store fallback
+    if aws ssm get-parameter --name "/enrichment/apollo-api-key" --region ${REGION} > /dev/null 2>&1; then
+        KEY_STATUS="${KEY_STATUS}✅ Apollo: Available in Parameter Store\n"
+        KEYS_AVAILABLE=true
+    else
+        KEY_STATUS="${KEY_STATUS}❌ Apollo: Not available (parameter or Parameter Store)\n"
+    fi
+fi
+
+echo -e "$KEY_STATUS"
+if [ "$KEYS_AVAILABLE" = false ]; then
+    echo "⚠️  Warning: No enrichment API keys available. Enrichment pipeline will be disabled."
     echo ""
 fi
 
@@ -128,12 +174,14 @@ if [ "$ENVIRONMENT" = "production" ]; then
     fi
 fi
 
-# Deploy with environment-specific config and OpenAI API key override
+# Deploy with environment-specific config and API key overrides
 sam deploy \
     --config-env ${ENVIRONMENT} \
     --parameter-overrides \
         Environment=${ENVIRONMENT} \
         OpenAIApiKey=${OPENAI_API_KEY} \
+        RocketReachApiKey=${ROCKETREACH_API_KEY:-""} \
+        ApolloApiKey=${APOLLO_API_KEY:-""} \
         InputBucketBaseName=${INPUT_BUCKET_BASE_NAME:-data-pipeline-input} \
         OutputBucketBaseName=${OUTPUT_BUCKET_BASE_NAME:-data-pipeline-output}
 
