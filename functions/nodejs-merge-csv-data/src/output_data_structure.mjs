@@ -13,23 +13,24 @@ export const OUTPUT_DATA_STRUCTURE = {
   state: "string",
   zip_code: "string",
   status: "string", // "created"
+  quality_status: "string", // enum: "insufficient", "need_review", "ready"
   emails: [
     {
-      email: "string", //e.g "john.doe@email.com"
+      value: "string", //e.g "john.doe@email.com"
       priority: 1, // e.g 1
     },
     {
-      email: "string", //"john.alt@email.com",
+      value: "string", //"john.alt@email.com",
       priority: 1, // e.g 1
     },
   ],
   phones: [
     {
-      phone: "string", // e.g "+1-555-111111"
+      value: "string", // e.g "+1-555-111111"
       priority: 1, // e.g 1
     },
     {
-      phone: "string", // e.g "+1-555-222222"
+      value: "string", // e.g "+1-555-222222"
       priority: 1, // e.g 2
     },
   ],

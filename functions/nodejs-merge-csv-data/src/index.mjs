@@ -15,9 +15,37 @@ import {
 import { OUTPUT_DATA_STRUCTURE } from "./output_data_structure.mjs";
 const s3 = new S3Client({});
 
+// Calculate quality status based on contact data availability
+const calculateQualityStatus = (contact) => {
+  let contactDataPieces = 0;
+  
+  // Check for email
+  if (contact.emails && contact.emails.length > 0 && contact.emails.some(email => email.value && email.value.trim())) {
+      contactDataPieces++;
+  }
+  
+  // Check for phone
+  if (contact.phones && contact.phones.length > 0 && contact.phones.some(phone => phone.value && phone.value.trim())) {
+      contactDataPieces++;
+  }
+  
+  // Check for address combination (address + city + state + zip)
+  if (contact.address1 && contact.address1.trim() && 
+      contact.city && contact.city.trim() && 
+      contact.state && contact.state.trim() && 
+      contact.zip_code && contact.zip_code.trim()) {
+      contactDataPieces++;
+  }
+  
+  // Return status based on count
+  if (contactDataPieces === 0) return "insufficient";
+  if (contactDataPieces === 1) return "need_review";
+  return "ready";
+};
+
 // Transform input data to OUTPUT_DATA_STRUCTURE format
 const transformToOutputStructure = (inputData, campaign_id, commit_id) => {
-  return {
+  const transformedContact = {
       campaign_id: campaign_id || inputData.campaign_id || "",
       commit_id: commit_id || inputData.commit_id || "",
       first_name: inputData.first_name || "",
@@ -35,6 +63,11 @@ const transformToOutputStructure = (inputData, campaign_id, commit_id) => {
       emails: inputData.email ? [{ value: inputData.email, priority: 1 }] : [],
       phones: inputData.phone ? [{ value: inputData.phone, priority: 1 }] : [],
   };
+  
+  // Calculate and add quality_status
+  transformedContact.quality_status = calculateQualityStatus(transformedContact);
+  
+  return transformedContact;
 };
 
 // Deduplicate records based on first_name, last_name, and linkedin_url
@@ -52,13 +85,13 @@ const deduplicateRecords = (records) => {
       if (record.emails && record.emails.length > 0) {
         const newEmail = record.emails[0];
         const emailExists = existing.emails.some(
-          (e) => e.email === newEmail.email,
+          (e) => e.value === newEmail.value,
         );
         if (!emailExists) {
           const nextEmailPriority =
             Math.max(...existing.emails.map((e) => e.priority), 0) + 1;
           existing.emails.push({
-            email: newEmail.email,
+            value: newEmail.value,
             priority: nextEmailPriority,
           });
         }
@@ -68,13 +101,13 @@ const deduplicateRecords = (records) => {
       if (record.phones && record.phones.length > 0) {
         const newPhone = record.phones[0];
         const phoneExists = existing.phones.some(
-          (p) => p.phone === newPhone.phone,
+          (p) => p.value === newPhone.value,
         );
         if (!phoneExists) {
           const nextPhonePriority =
             Math.max(...existing.phones.map((p) => p.priority), 0) + 1;
           existing.phones.push({
-            phone: newPhone.phone,
+            value: newPhone.value,
             priority: nextPhonePriority,
           });
         }
@@ -85,6 +118,7 @@ const deduplicateRecords = (records) => {
         if (
           field !== "emails" &&
           field !== "phones" &&
+          field !== "quality_status" &&
           (!existing[field] || existing[field] === "") &&
           record[field] &&
           record[field] !== ""
@@ -92,6 +126,9 @@ const deduplicateRecords = (records) => {
           existing[field] = record[field];
         }
       });
+
+      // Recalculate quality_status after merging
+      existing.quality_status = calculateQualityStatus(existing);
     } else {
       // New unique record
       uniqueRecords.set(key, record);

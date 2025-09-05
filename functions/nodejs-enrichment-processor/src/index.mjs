@@ -170,6 +170,38 @@ export const handler = async (event, context) => {
 };
 
 /**
+ * Calculate quality status based on contact data availability
+ * @param {Object} contact - Contact data to evaluate
+ * @returns {string} - Quality status: "insufficient", "need_review", or "ready"
+ */
+function calculateQualityStatus(contact) {
+    let contactDataPieces = 0;
+    
+    // Check for email
+    if (contact.emails && contact.emails.length > 0 && contact.emails.some(email => email.value && email.value.trim())) {
+        contactDataPieces++;
+    }
+    
+    // Check for phone
+    if (contact.phones && contact.phones.length > 0 && contact.phones.some(phone => phone.value && phone.value.trim())) {
+        contactDataPieces++;
+    }
+    
+    // Check for address combination (address + city + state + zip)
+    if (contact.address1 && contact.address1.trim() && 
+        contact.city && contact.city.trim() && 
+        contact.state && contact.state.trim() && 
+        contact.zip_code && contact.zip_code.trim()) {
+        contactDataPieces++;
+    }
+    
+    // Return status based on count
+    if (contactDataPieces === 0) return "insufficient";
+    if (contactDataPieces === 1) return "need_review";
+    return "ready";
+}
+
+/**
  * Transform enriched contact data to match ENRICH_DATA_STRUCTURE format
  * @param {Object} contact - Enriched contact data
  * @param {Object} metadata - Enrichment metadata (optional)
@@ -179,7 +211,7 @@ export const handler = async (event, context) => {
  * @returns {Object} - Transformed contact in standard format
  */
 function transformToEnrichDataStructure(contact, _metadata, campaign_id, commit_id, status) {
-    return {
+    const transformedContact = {
         id: contact.id || "",
         commit_id: commit_id || "",
         campaign_id: campaign_id || "",
@@ -198,6 +230,11 @@ function transformToEnrichDataStructure(contact, _metadata, campaign_id, commit_
         emails: transformEmailsToStandardFormat(contact.emails || []),
         phones: transformPhonesToStandardFormat(contact.phones || [])
     };
+    
+    // Calculate and add quality_status
+    transformedContact.quality_status = calculateQualityStatus(transformedContact);
+    
+    return transformedContact;
 }
 
 /**

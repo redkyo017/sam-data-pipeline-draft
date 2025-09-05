@@ -14,6 +14,7 @@ export const ENRICH_DATA_STRUCTURE = {
   state: "", // string
   zip_code: "", // string
   status: "", // string e.g "created"
+  quality_status: "", // string enum: "insufficient", "need_review", "ready"
   emails: [
     {
       id: "", // string
