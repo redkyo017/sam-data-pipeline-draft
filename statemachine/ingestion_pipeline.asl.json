@@ -13,18 +13,39 @@
                 "Key.$": "$.key",
                 "campaign_id.$": "$.campaign_id"
             },
+            "Next": "Count Total Records"
+        },
+        "Count Total Records": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+                "FunctionName": "${CountRecordsFunctionArn}",
+                "Payload": {
+                    "Bucket.$": "$.Bucket",
+                    "Key.$": "$.Key"
+                }
+            },
+            "Next": "Prepare Data for Processing"
+        },
+        "Prepare Data for Processing": {
+            "Type": "Pass",
+            "Assign": {
+                "total_records.$": "$.Payload.totalRecords"
+            },
             "Next": "S3 CSV file Ingestion"
         },
         "S3 CSV file Ingestion": {
             "Type": "Map",
             "Assign": {
                 "campaign_id.$": "$campaign_id",
-                "commit_id.$": "$commit_id"
+                "commit_id.$": "$commit_id",
+                "total_records.$": "$total_records"
             },
             "ItemSelector": {
                 "items.$": "$$.Map.Item.Value",
                 "commit_id.$": "$commit_id",
-                "campaign_id.$": "$campaign_id"
+                "campaign_id.$": "$campaign_id",
+                "total_records.$": "$total_records"
             },
             "ItemProcessor": {
                 "ProcessorConfig": {
@@ -113,6 +134,38 @@
                                 "ResultPath": "$.error"
                             }
                         ],
+                        "Next": "Prepare Batch Progress Message"
+                    },
+                    "Prepare Batch Progress Message": {
+                        "Type": "Pass",
+                        "Parameters": {
+                            "progressMessage": {
+                                "execution_id.$": "$$.Execution.Name",
+                                "campaign_id.$": "$.Items[0].campaign_id",
+                                "commit_id.$": "$.Items[0].commit_id",
+                                "timestamp.$": "$$.State.EnteredTime",
+                                "current.$": "States.ArrayLength($.Items)",
+                                "total.$": "$.Items[0].total_records",
+                                "status": "running",
+                                "pipeline": "ingestion",
+                                "step": "batch_processing",
+                                "metadata": {
+                                    "type": "BATCH_PROGRESS",
+                                    "batchSize.$": "States.ArrayLength($.items)",
+                                    "processingStage": "standardization_complete"
+                                }
+                            }
+                        },
+                        "Next": "Send Batch Progress to SQS"
+                    },
+                    "Send Batch Progress to SQS": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:states:::sqs:sendMessage",
+                        "Parameters": {
+                            "QueueUrl": "${BatchFailureQueueUrl}",
+                            "MessageBody.$": "States.JsonToString($.progressMessage)"
+                        },
+                        "ResultPath": "$.progressResult",
                         "End": true
                     },
                     "Prepare Failure Message": {
@@ -124,25 +177,50 @@
                                 "commit_id.$": "$.Items[0].commit_id", 
                                 "timestamp.$": "$$.State.EnteredTime",
                                 "current.$": "States.ArrayLength($.Items)",
-                                "total": -1,
+                                "total.$": "$.Items[0].total_records",
                                 "status": "failed",
                                 "pipeline": "ingestion",
+                                "step": "batch_processing",
                                 "error": {
                                     "cause.$": "$.error.Cause",
                                     "error.$": "$.error.Error"
                                 }
                             }
                         },
-                        "Next": "Send Batch Failure to SQS"
+                        "Next": "Send Failure to Both Queues"
                     },
-                    "Send Batch Failure to SQS": {
-                        "Type": "Task",
-                        "Resource": "arn:aws:states:::sqs:sendMessage",
-                        "Parameters": {
-                            "QueueUrl": "${BatchFailureQueueUrl}",
-                            "MessageBody.$": "States.JsonToString($.failureMessage)"
-                        },
-                        "ResultPath": "$.sqsResult",
+                    "Send Failure to Both Queues": {
+                        "Type": "Parallel",
+                        "Branches": [
+                            {
+                                "StartAt": "Send to Progress Queue",
+                                "States": {
+                                    "Send to Progress Queue": {
+                                        "Type": "Task",
+                                        "Resource": "arn:aws:states:::sqs:sendMessage",
+                                        "Parameters": {
+                                            "QueueUrl": "${BatchFailureQueueUrl}",
+                                            "MessageBody.$": "States.JsonToString($.failureMessage)"
+                                        },
+                                        "End": true
+                                    }
+                                }
+                            },
+                            {
+                                "StartAt": "Send to Dead Letter Queue",
+                                "States": {
+                                    "Send to Dead Letter Queue": {
+                                        "Type": "Task",
+                                        "Resource": "arn:aws:states:::sqs:sendMessage",
+                                        "Parameters": {
+                                            "QueueUrl": "${ProcessingDeadLetterQueueUrl}",
+                                            "MessageBody.$": "States.JsonToString($.failureMessage)"
+                                        },
+                                        "End": true
+                                    }
+                                }
+                            }
+                        ],
                         "End": true
                     }
                 }
@@ -154,8 +232,8 @@
                     "CSVHeaderLocation": "FIRST_ROW"
                 },
                 "Parameters": {
-                    "Bucket.$": "$.Bucket",
-                    "Key.$": "$.Key"
+                    "Bucket.$": "$.Payload.Bucket",
+                    "Key.$": "$.Payload.Key"
                 }
             },
             "MaxConcurrency": ${MaxConcurrency},
@@ -182,13 +260,15 @@
                     "campaign_id.$": "$campaign_id",
                     "commit_id.$": "$commit_id",
                     "timestamp.$": "$$.State.EnteredTime",
-                    "current.$": "States.ArrayLength($)",
-                    "total.$": "States.ArrayLength($)",
+                    "current.$": "$total_records",
+                    "total.$": "$total_records",
                     "status": "completed",
                     "pipeline": "ingestion",
+                    "step": "execution_complete",
                     "metadata": {
                         "type": "EXECUTION_SUMMARY",
-                        "totalBatches.$": "States.ArrayLength($)"
+                        "totalBatches.$": "States.ArrayLength($)",
+                        "totalRecords.$": "$total_records"
                     }
                 },
                 "originalData.$": "$",

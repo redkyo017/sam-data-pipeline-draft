@@ -21,7 +21,8 @@
       "Bash(timeout:*)",
       "Bash(sed:*)",
       "Bash(npm test)",
-      "Bash(bash:*)"
+      "Bash(bash:*)",
+      "Bash(aws cloudformation describe-stacks:*)"
     ],
     "deny": [],
     "ask": []

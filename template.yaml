@@ -123,6 +123,21 @@ Resources:
         Type: SQS
         TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
 
+  CountRecordsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/nodejs-count-records/
+      Handler: src/index.handler
+      Description: 'Counts total records in S3 files for pipeline progress tracking'
+      MemorySize: 256
+      Timeout: 60
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
+
   StandardizationFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -232,14 +247,18 @@ Resources:
     Properties:
       DefinitionUri: statemachine/ingestion_pipeline.asl.json
       DefinitionSubstitutions:
+        CountRecordsFunctionArn: !GetAtt CountRecordsFunction.Arn
         ValidateRawValidFormatFunctionArn: !GetAtt ValidateRawValidFormatFunction.Arn
         MergeCsvDataFunctionArn: !GetAtt MergeCsvDataFunction.Arn
         StandardizationFunctionArn: !GetAtt StandardizationFunction.Arn
         MappingRawValidInputFunctionArn: !GetAtt MappingRawValidInputFunction.Arn
         ProcessStandardizedDataFunctionArn: !GetAtt ProcessStandardizedDataFunction.Arn
         BatchFailureQueueUrl: !Ref BatchFailureQueue
+        ProcessingDeadLetterQueueUrl: !Ref ProcessingDeadLetterQueue
         MaxConcurrency: !FindInMap [EnvironmentMap, !Ref Environment, StepFunctionsConcurrency]
       Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CountRecordsFunction
         - LambdaInvokePolicy:
             FunctionName: !Ref ValidateRawValidFormatFunction
         - LambdaInvokePolicy:
@@ -266,7 +285,9 @@ Resources:
             - Effect: Allow
               Action:
                 - sqs:SendMessage
-              Resource: !GetAtt BatchFailureQueue.Arn
+              Resource: 
+                - !GetAtt BatchFailureQueue.Arn
+                - !GetAtt ProcessingDeadLetterQueue.Arn
 
   PipelineTriggerFunction:
     Type: AWS::Serverless::Function
@@ -299,11 +320,15 @@ Resources:
     Properties:
       DefinitionUri: statemachine/enrichment_pipeline.asl.json
       DefinitionSubstitutions:
+        CountRecordsFunctionArn: !GetAtt CountRecordsFunction.Arn
         EnrichmentProcessorFunctionArn: !GetAtt EnrichmentProcessorFunction.Arn
         EnrichmentMergerFunctionArn: !GetAtt EnrichmentMergerFunction.Arn
         BatchFailureQueueUrl: !Ref BatchFailureQueue
+        ProcessingDeadLetterQueueUrl: !Ref ProcessingDeadLetterQueue
         MaxConcurrency: !FindInMap [EnvironmentMap, !Ref Environment, StepFunctionsConcurrency]
       Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CountRecordsFunction
         - LambdaInvokePolicy:
             FunctionName: !Ref EnrichmentProcessorFunction
         - LambdaInvokePolicy:
@@ -324,7 +349,9 @@ Resources:
             - Effect: Allow
               Action:
                 - sqs:SendMessage
-              Resource: !GetAtt BatchFailureQueue.Arn
+              Resource: 
+                - !GetAtt BatchFailureQueue.Arn
+                - !GetAtt ProcessingDeadLetterQueue.Arn
       # Events:
       #   ApiEvent:
       #     Type: Api
