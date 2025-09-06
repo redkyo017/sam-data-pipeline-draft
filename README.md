@@ -7,10 +7,10 @@ A serverless data processing pipeline built with AWS SAM (Serverless Application
 The pipeline consists of:
 
 - **5 Lambda Functions** for data processing stages
-- **1 Step Functions State Machine** for orchestration  
+- **2 Step Functions State Machines** for orchestration (ingestion & enrichment)
 - **2 S3 Buckets** for input/output storage
 - **1 API Gateway** endpoint for triggering executions
-- **1 SQS Dead Letter Queue** for error handling
+- **2 SQS Queues** for progress tracking and error handling
 
 ### Data Flow
 
@@ -196,8 +196,9 @@ Example: Dev environment creates `data-pipeline-input-dev-123456789012`
 
 - **CloudWatch Logs**: Function execution logs (retention varies by environment)
 - **X-Ray Tracing**: Distributed tracing enabled for all functions
+- **Progress Queue**: Real-time batch progress tracking via SQS
 - **Dead Letter Queue**: Failed executions sent to SQS for analysis
-- **Step Functions Console**: Visual execution monitoring
+- **Step Functions Console**: Visual execution monitoring with enhanced fault tolerance
 
 ## 🔐 Security
 
@@ -239,17 +240,52 @@ Example: Dev environment creates `data-pipeline-input-dev-123456789012`
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
+## 🛡️ Error Handling & Fault Tolerance
+
+The pipeline implements a sophisticated three-tier error handling system:
+
+### Systemic Failure Detection
+- **OpenAI API Issues**: Authentication failures, invalid API keys, missing models, and quota issues automatically trigger the failure queue
+- **Network Problems**: Connection timeouts and network errors are classified as systemic failures
+- **Pipeline Halt**: Systemic failures stop processing and route to failure queue for immediate attention
+
+### Non-Systemic Error Handling  
+- **Individual Record Issues**: Processing continues gracefully with empty results for failed records
+- **Partial Success**: Batch processing continues even if some records fail validation or standardization
+- **Graceful Degradation**: Enrichment pipeline maintains graceful error handling for vendor API issues
+
+### Progress Tracking
+- **Real-time Monitoring**: Batch progress messages sent to SQS progress queue
+- **Execution Summaries**: Completion notifications with detailed metrics
+- **Enhanced Visibility**: Monitor pipeline execution through progress queue messages
+
 ## 🆘 Troubleshooting
 
 ### Common Issues
 
 1. **Function timeout**: Increase timeout in `template.yaml`
 2. **Memory issues**: Increase MemorySize for data-heavy functions
-3. **OpenAI API errors**: Check API key and quotas
+3. **OpenAI API errors**: 
+   - **Systemic**: Invalid API key, authentication failures → Check failure queue
+   - **Non-systemic**: Individual record failures → Check progress queue for partial results
 4. **S3 permissions**: Verify bucket policies and IAM roles
+5. **Progress tracking**: Monitor SQS progress queue for real-time pipeline status
+
+### Error Classification
+
+- **🚨 Systemic Failures** (Pipeline stops):
+  - OpenAI API key missing/invalid
+  - Network connection issues
+  - Service authentication failures
+  
+- **⚠️ Non-Systemic Failures** (Pipeline continues):
+  - Individual record validation failures
+  - Partial data standardization issues
+  - Single record processing errors
 
 ### Getting Help
 
-- Check CloudWatch Logs for detailed error messages
-- Review Step Functions execution history
-- Monitor SQS Dead Letter Queue for failed messages
+- Check **Progress Queue** for real-time pipeline status and batch completion
+- Review **CloudWatch Logs** for detailed error messages and execution traces
+- Monitor **Step Functions Console** for visual execution flow and error states
+- Check **SQS Dead Letter Queue** for critical system failures requiring immediate attention

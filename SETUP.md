@@ -379,8 +379,8 @@ The pipeline orchestrates the following intelligent workflow:
 
 - **Distributed Processing**: Handles large datasets with parallel execution
 - **Intelligent Routing**: Automatically chooses optimal processing path
-- **Error Handling**: Dead letter queues and retry mechanisms
-- **Monitoring**: CloudWatch logs and X-Ray tracing
+- **Error Handling**: Systemic failure detection with progress tracking and dead letter queues
+- **Monitoring**: CloudWatch logs, X-Ray tracing, and real-time SQS progress queues
 - **Security**: IAM least privilege and encryption
 
 ## Monitoring & Troubleshooting
@@ -390,7 +390,24 @@ The pipeline orchestrates the following intelligent workflow:
 - **Function Logs**: `/aws/lambda/[function-name]` log groups
 - **Step Functions Logs**: `/aws/stepfunctions/[stack-name]-ingestion` log group
 - **X-Ray Tracing**: End-to-end request tracing enabled
-- **Dead Letter Queue**: Failed executions in SQS for analysis
+- **Progress Queue**: Real-time batch progress tracking via SQS
+- **Dead Letter Queue**: Critical system failures in SQS for analysis
+
+### Progress Monitoring
+
+Monitor pipeline execution in real-time:
+
+```bash
+# Monitor progress queue for batch updates
+aws sqs receive-message \
+  --queue-url https://sqs.ap-southeast-1.amazonaws.com/[account]/progress-queue \
+  --wait-time-seconds 20
+
+# Check for system failures
+aws sqs receive-message \
+  --queue-url https://sqs.ap-southeast-1.amazonaws.com/[account]/dead-letter-queue \
+  --wait-time-seconds 5
+```
 
 ### Common Issues & Solutions
 
@@ -401,10 +418,19 @@ The pipeline orchestrates the following intelligent workflow:
    ```
 
 2. **"OpenAI API errors"**
+   - **Systemic failures** (pipeline stops): Invalid API key, authentication errors, missing model
+   - **Non-systemic failures** (pipeline continues): Individual record processing errors
+   
    ```bash
    # Test API key
    curl https://api.openai.com/v1/models \
      -H "Authorization: Bearer your-api-key"
+     
+   # Check failure queue for systemic issues
+   aws sqs receive-message --queue-url [dead-letter-queue-url]
+   
+   # Check progress queue for partial results
+   aws sqs receive-message --queue-url [progress-queue-url]
    ```
 
 3. **"Function timeout"**

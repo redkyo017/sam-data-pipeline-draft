@@ -238,6 +238,8 @@ aws ssm put-parameter --name "/enrichment/apollo-api-key" --value "$APOLLO_PROD_
 
 ## 🚨 Troubleshooting
 
+**Note**: The enrichment pipeline maintains **graceful error handling** - vendor API failures (RocketReach, Apollo.io) are handled gracefully and continue processing. The pipeline does not implement systemic failure detection for vendor APIs, allowing partial enrichment results.
+
 ### Common Issues
 
 #### 1. Parameter Not Found Error
@@ -312,6 +314,16 @@ aws logs tail /aws/lambda/sam-data-pipeline-dev-EnrichmentProcessorFunction --fo
 
 # View Step Functions execution logs
 aws logs tail /aws/stepfunctions/sam-data-pipeline-dev-enrichment --follow --region ap-southeast-1
+
+# Monitor progress queue for real-time pipeline status
+aws sqs receive-message \
+  --queue-url https://sqs.ap-southeast-1.amazonaws.com/[account]/progress-queue \
+  --wait-time-seconds 20
+
+# Check dead letter queue for critical failures
+aws sqs receive-message \
+  --queue-url https://sqs.ap-southeast-1.amazonaws.com/[account]/dead-letter-queue \
+  --wait-time-seconds 5
 ```
 
 #### Check Enrichment Metrics
