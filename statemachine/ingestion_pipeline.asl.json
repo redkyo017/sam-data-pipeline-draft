@@ -151,10 +151,12 @@
                                 "step": "batch_processing",
                                 "metadata": {
                                     "type": "BATCH_PROGRESS",
-                                    "batchSize.$": "States.ArrayLength($.items)",
+                                    "batchSize.$": "States.ArrayLength($.Items)",
                                     "processingStage": "standardization_complete"
                                 }
-                            }
+                            },
+                            "bucket.$": "$.bucket",
+                            "key.$": "$.key"
                         },
                         "Next": "Send Batch Progress to SQS"
                     },
@@ -185,7 +187,9 @@
                                     "cause.$": "$.error.Cause",
                                     "error.$": "$.error.Error"
                                 }
-                            }
+                            },
+                            "bucket.$": "$.bucket",
+                            "key.$": "$.key"
                         },
                         "Next": "Send Failure to Both Queues"
                     },
