@@ -1,0 +1,13 @@
+{
+  "name": "nodejs-count-records",
+  "version": "1.0.0",
+  "description": "Count total records in S3 files for pipeline progress tracking",
+  "main": "src/index.mjs",
+  "type": "module",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.445.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

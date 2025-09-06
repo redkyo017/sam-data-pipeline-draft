@@ -65,5 +65,6 @@ export const handler = async (event) => {
   return {
     bucket,
     key,
+    Items: event?.data?.Items || [],
   };
 };
