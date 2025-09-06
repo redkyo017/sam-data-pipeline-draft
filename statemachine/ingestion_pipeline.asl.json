@@ -187,9 +187,7 @@
                                     "cause.$": "$.error.Cause",
                                     "error.$": "$.error.Error"
                                 }
-                            },
-                            "bucket.$": "$.bucket",
-                            "key.$": "$.key"
+                            }
                         },
                         "Next": "Send Failure to Both Queues"
                     },
@@ -312,6 +310,79 @@
                     "commit_id.$": "$commit_id"
                 }
             },
+            "Catch": [
+                {
+                    "ErrorEquals": ["States.ALL"],
+                    "Next": "Handle Merge Failure",
+                    "ResultPath": "$.mergeError"
+                }
+            ],
+            "Next": "Prepare Final Success Message"
+        },
+        "Prepare Final Success Message": {
+            "Type": "Pass",
+            "Parameters": {
+                "successMessage": {
+                    "execution_id.$": "$$.Execution.Name",
+                    "campaign_id.$": "$campaign_id",
+                    "commit_id.$": "$commit_id",
+                    "timestamp.$": "$$.State.EnteredTime",
+                    "current.$": "$total_records",
+                    "total.$": "$total_records",
+                    "status": "completed",
+                    "pipeline": "ingestion",
+                    "step": "merge_complete",
+                    "metadata": {
+                        "type": "PIPELINE_COMPLETE",
+                        "stage": "post-ingestion"
+                    }
+                }
+            },
+            "Next": "Send Final Success to SQS"
+        },
+        "Send Final Success to SQS": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::sqs:sendMessage",
+            "Parameters": {
+                "QueueUrl": "${BatchFailureQueueUrl}",
+                "MessageBody.$": "States.JsonToString($.successMessage)"
+            },
+            "ResultPath": "$.sqsResult",
+            "End": true
+        },
+        "Handle Merge Failure": {
+            "Type": "Pass",
+            "Parameters": {
+                "failureMessage": {
+                    "execution_id.$": "$$.Execution.Name",
+                    "campaign_id.$": "$campaign_id",
+                    "commit_id.$": "$commit_id",
+                    "timestamp.$": "$$.State.EnteredTime",
+                    "current.$": "$total_records",
+                    "total.$": "$total_records",
+                    "status": "failed",
+                    "pipeline": "ingestion",
+                    "step": "merge_failed",
+                    "error": {
+                        "cause.$": "$.mergeError.Cause",
+                        "error.$": "$.mergeError.Error"
+                    },
+                    "metadata": {
+                        "type": "MERGE_FAILURE",
+                        "stage": "post-ingestion"
+                    }
+                }
+            },
+            "Next": "Send Merge Failure to SQS"
+        },
+        "Send Merge Failure to SQS": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::sqs:sendMessage",
+            "Parameters": {
+                "QueueUrl": "${BatchFailureQueueUrl}",
+                "MessageBody.$": "States.JsonToString($.failureMessage)"
+            },
+            "ResultPath": "$.sqsResult",
             "End": true
         }
     }

@@ -66,7 +66,15 @@ export const handler = async (event, context) => {
 
     } catch (error) {
         console.error('Error processing batch:', error);
-        return []; // Return empty array for failed batches
+        
+        // Check if this is a systemic failure that should trigger the failure queue
+        if (isSysemicFailure(error)) {
+            console.error('Systemic failure detected, throwing error to trigger failure queue:', error.message);
+            throw error;
+        }
+        
+        // For non-systemic failures, return empty array to continue processing
+        return [];
     }
 };
 
@@ -197,4 +205,28 @@ Example output format for a batch:
   ...
 ]
 `;
+}
+
+function isSysemicFailure(error) {
+    const errorMessage = error.message.toLowerCase();
+    
+    // Check for systemic failures that should trigger the failure queue
+    const systemicFailureIndicators = [
+        'openai_api_key environment variable not set',
+        'failed to standardize data with openai',
+        'no response from openai api',
+        'invalid json response from openai',
+        'authentication failed',
+        'invalid api key',
+        'model not found',
+        'insufficient quota',
+        'rate limit exceeded',  // Persistent rate limiting might be systemic
+        'network error',
+        'connection refused',
+        'timeout'
+    ];
+    
+    return systemicFailureIndicators.some(indicator => 
+        errorMessage.includes(indicator)
+    );
 }
