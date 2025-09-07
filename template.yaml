@@ -34,6 +34,20 @@ Parameters:
     Type: String
     Description: Base name for the S3 output bucket (will be suffixed with environment)
     Default: data-pipeline-output
+  InputBucketName:
+    Type: String
+    Description: Optional explicit input bucket name (overrides InputBucketBaseName if provided)
+    Default: ""
+  OutputBucketName:
+    Type: String
+    Description: Optional explicit output bucket name (overrides OutputBucketBaseName if provided)
+    Default: ""
+
+Conditions:
+  UseExplicitInputBucket: !Not [!Equals [!Ref InputBucketName, ""]]
+  UseExplicitOutputBucket: !Not [!Equals [!Ref OutputBucketName, ""]]
+  CreateInputBucket: !Equals [!Ref InputBucketName, ""]
+  CreateOutputBucket: !Equals [!Ref OutputBucketName, ""]
 
 Mappings:
   EnvironmentMap:
@@ -71,11 +85,13 @@ Globals:
 Resources:
   InputBucket:
     Type: AWS::S3::Bucket
+    Condition: CreateInputBucket
     Properties:
       BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
 
   OutputBucket:
     Type: AWS::S3::Bucket
+    Condition: CreateOutputBucket
     Properties:
       BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
 
@@ -87,7 +103,16 @@ Resources:
       Description: 'Validates CSV input format against expected schema'
       Policies:
         - S3ReadPolicy:
-            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+            BucketName: !If 
+              - UseExplicitInputBucket
+              - !Ref InputBucketName
+              - !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - kms:Decrypt
+                - kms:GenerateDataKey
+              Resource: "*"
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
@@ -102,9 +127,22 @@ Resources:
       Timeout: 300
       Policies:
         - S3ReadPolicy:
-            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
-        - S3WritePolicy:
-            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+            BucketName: !If 
+              - UseExplicitInputBucket
+              - !Ref InputBucketName
+              - !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:DeleteObject
+              Resource: 
+                - !Sub 
+                  - "arn:aws:s3:::${BucketName}/*"
+                  - BucketName: !If 
+                      - UseExplicitOutputBucket
+                      - !Ref OutputBucketName
+                      - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
         - Statement:
             - Effect: Allow
               Action:
@@ -116,9 +154,17 @@ Resources:
               Action:
                 - s3:ListBucket
               Resource: "arn:aws:s3:::*"
+            - Effect: Allow
+              Action:
+                - kms:Decrypt
+                - kms:GenerateDataKey
+              Resource: "*"
       Environment:
         Variables:
-          OUTPUT_BUCKET: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+          OUTPUT_BUCKET: !If 
+            - UseExplicitOutputBucket
+            - !Ref OutputBucketName
+            - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
@@ -133,7 +179,16 @@ Resources:
       Timeout: 60
       Policies:
         - S3ReadPolicy:
-            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+            BucketName: !If 
+              - UseExplicitInputBucket
+              - !Ref InputBucketName
+              - !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - kms:Decrypt
+                - kms:GenerateDataKey
+              Resource: "*"
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
@@ -148,7 +203,16 @@ Resources:
       Timeout: 300
       Policies:
         - S3ReadPolicy:
-            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+            BucketName: !If 
+              - UseExplicitInputBucket
+              - !Ref InputBucketName
+              - !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - kms:Decrypt
+                - kms:GenerateDataKey
+              Resource: "*"
       Environment:
         Variables:
           OPENAI_API_KEY: !Ref OpenAIApiKey
@@ -173,11 +237,30 @@ Resources:
       Handler: src/index.handler
       Description: 'Final processing and storage of standardized data'
       Policies:
-        - S3WritePolicy:
-            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:DeleteObject
+              Resource: 
+                - !Sub 
+                  - "arn:aws:s3:::${BucketName}/*"
+                  - BucketName: !If 
+                      - UseExplicitOutputBucket
+                      - !Ref OutputBucketName
+                      - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - kms:Decrypt
+                - kms:GenerateDataKey
+              Resource: "*"
       Environment:
         Variables:
-          BUCKET_NAME: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+          BUCKET_NAME: !If 
+            - UseExplicitOutputBucket
+            - !Ref OutputBucketName
+            - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
@@ -192,23 +275,36 @@ Resources:
       Timeout: 300
       Policies:
         - S3ReadPolicy:
-            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
-        - S3WritePolicy:
-            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+            BucketName: !If 
+              - UseExplicitInputBucket
+              - !Ref InputBucketName
+              - !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
         - Statement:
             - Effect: Allow
               Action:
-                - ssm:GetParameter
+                - s3:PutObject
+                - s3:DeleteObject
               Resource: 
-                - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/enrichment/rocketreach-api-key"
-                - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/enrichment/apollo-api-key"
+                - !Sub 
+                  - "arn:aws:s3:::${BucketName}/*"
+                  - BucketName: !If 
+                      - UseExplicitOutputBucket
+                      - !Ref OutputBucketName
+                      - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - kms:Decrypt
+                - kms:GenerateDataKey
+              Resource: "*"
       Environment:
         Variables:
-          ROCKETREACH_API_KEY_PARAM: /enrichment/rocketreach-api-key
-          APOLLO_API_KEY_PARAM: /enrichment/apollo-api-key
           ROCKETREACH_API_KEY: !Ref RocketReachApiKey
           APOLLO_API_KEY: !Ref ApolloApiKey
-          BUCKET_NAME: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+          BUCKET_NAME: !If 
+            - UseExplicitOutputBucket
+            - !Ref OutputBucketName
+            - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
@@ -221,10 +317,36 @@ Resources:
       MemorySize: 512
       Timeout: 300
       Policies:
-        - S3ReadPolicy:
-            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
-        - S3WritePolicy:
-            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:ListBucket
+              Resource: 
+                - !Sub 
+                  - "arn:aws:s3:::${BucketName}/*"
+                  - BucketName: !If 
+                      - UseExplicitOutputBucket
+                      - !Ref OutputBucketName
+                      - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+                - !Sub 
+                  - "arn:aws:s3:::${BucketName}"
+                  - BucketName: !If 
+                      - UseExplicitOutputBucket
+                      - !Ref OutputBucketName
+                      - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:DeleteObject
+              Resource: 
+                - !Sub 
+                  - "arn:aws:s3:::${BucketName}/*"
+                  - BucketName: !If 
+                      - UseExplicitOutputBucket
+                      - !Ref OutputBucketName
+                      - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
         - Statement:
             - Effect: Allow
               Action:
@@ -233,11 +355,29 @@ Resources:
                 - s3:DeleteObject
                 - s3:ListBucket
               Resource: 
-                - !Sub "arn:aws:s3:::${OutputBucketBaseName}-${Environment}-${AWS::AccountId}/*"
-                - !Sub "arn:aws:s3:::${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+                - !Sub 
+                  - "arn:aws:s3:::${BucketName}/*"
+                  - BucketName: !If 
+                      - UseExplicitOutputBucket
+                      - !Ref OutputBucketName
+                      - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+                - !Sub 
+                  - "arn:aws:s3:::${BucketName}"
+                  - BucketName: !If 
+                      - UseExplicitOutputBucket
+                      - !Ref OutputBucketName
+                      - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+            - Effect: Allow
+              Action:
+                - kms:Decrypt
+                - kms:GenerateDataKey
+              Resource: "*"
       Environment:
         Variables:
-          BUCKET_NAME: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+          BUCKET_NAME: !If 
+            - UseExplicitOutputBucket
+            - !Ref OutputBucketName
+            - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt ProcessingDeadLetterQueue.Arn
@@ -270,13 +410,32 @@ Resources:
         - LambdaInvokePolicy:
             FunctionName: !Ref ProcessStandardizedDataFunction
         - S3ReadPolicy:
-            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
-        - S3WritePolicy:
-            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+            BucketName: !If 
+              - UseExplicitInputBucket
+              - !Ref InputBucketName
+              - !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:DeleteObject
+              Resource: 
+                - !Sub 
+                  - "arn:aws:s3:::${BucketName}/*"
+                  - BucketName: !If 
+                      - UseExplicitOutputBucket
+                      - !Ref OutputBucketName
+                      - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
         - S3CrudPolicy:
-            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+            BucketName: !If 
+              - UseExplicitInputBucket
+              - !Ref InputBucketName
+              - !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
         - S3CrudPolicy:
-            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+            BucketName: !If 
+              - UseExplicitOutputBucket
+              - !Ref OutputBucketName
+              - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
         - Statement:
             - Effect: Allow
               Action:
@@ -288,6 +447,11 @@ Resources:
               Resource: 
                 - !GetAtt BatchFailureQueue.Arn
                 - !GetAtt ProcessingDeadLetterQueue.Arn
+            - Effect: Allow
+              Action:
+                - kms:Decrypt
+                - kms:GenerateDataKey
+              Resource: "*"
 
   PipelineTriggerFunction:
     Type: AWS::Serverless::Function
@@ -334,13 +498,32 @@ Resources:
         - LambdaInvokePolicy:
             FunctionName: !Ref EnrichmentMergerFunction
         - S3ReadPolicy:
-            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
-        - S3WritePolicy:
-            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+            BucketName: !If 
+              - UseExplicitInputBucket
+              - !Ref InputBucketName
+              - !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:DeleteObject
+              Resource: 
+                - !Sub 
+                  - "arn:aws:s3:::${BucketName}/*"
+                  - BucketName: !If 
+                      - UseExplicitOutputBucket
+                      - !Ref OutputBucketName
+                      - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
         - S3CrudPolicy:
-            BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+            BucketName: !If 
+              - UseExplicitInputBucket
+              - !Ref InputBucketName
+              - !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
         - S3CrudPolicy:
-            BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+            BucketName: !If 
+              - UseExplicitOutputBucket
+              - !Ref OutputBucketName
+              - !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
         - Statement:
             - Effect: Allow
               Action:
@@ -352,6 +535,11 @@ Resources:
               Resource: 
                 - !GetAtt BatchFailureQueue.Arn
                 - !GetAtt ProcessingDeadLetterQueue.Arn
+            - Effect: Allow
+              Action:
+                - kms:Decrypt
+                - kms:GenerateDataKey
+              Resource: "*"
       # Events:
       #   ApiEvent:
       #     Type: Api
@@ -415,12 +603,18 @@ Outputs:
   
   InputBucketName:
     Description: "Name of the S3 input bucket"
-    Value: !Ref InputBucket
+    Value: !If 
+      - UseExplicitInputBucket
+      - !Ref InputBucketName
+      - !Ref InputBucket
     Export:
       Name: !Sub "${AWS::StackName}-InputBucket"
   
   OutputBucketName:
     Description: "Name of the S3 output bucket" 
-    Value: !Ref OutputBucket
+    Value: !If 
+      - UseExplicitOutputBucket
+      - !Ref OutputBucketName
+      - !Ref OutputBucket
     Export:
       Name: !Sub "${AWS::StackName}-OutputBucket"

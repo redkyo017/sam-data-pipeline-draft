@@ -183,7 +183,9 @@ sam deploy \
         RocketReachApiKey=${ROCKETREACH_API_KEY:-""} \
         ApolloApiKey=${APOLLO_API_KEY:-""} \
         InputBucketBaseName=${INPUT_BUCKET_BASE_NAME:-data-pipeline-input} \
-        OutputBucketBaseName=${OUTPUT_BUCKET_BASE_NAME:-data-pipeline-output}
+        OutputBucketBaseName=${OUTPUT_BUCKET_BASE_NAME:-data-pipeline-output} \
+        InputBucketName=${INPUT_BUCKET_NAME:-""} \
+        OutputBucketName=${OUTPUT_BUCKET_NAME:-""}
 
 # Post-deployment actions
 echo ""
