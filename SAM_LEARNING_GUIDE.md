@@ -87,30 +87,66 @@ Parameters:
     Type: String
     NoEcho: true                 # Hides value in CloudFormation console
     
-  InputBucketName:               # Optional explicit bucket name
+  InputBucketName:               # Required S3 bucket name for input data
     Type: String
-    Default: ""                  # Empty = create new bucket
+    Default: data-pipeline-input
     
-  InputBucketBaseName:           # Base name for generated bucket
+  OutputBucketName:              # Required S3 bucket name for output data  
     Type: String
-    Default: data-pipeline-input  # Used when InputBucketName is empty
+    Default: data-pipeline-output
+    
+  CreateInputBucket:             # Whether to create input bucket (auto-detected)
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    
+  CreateOutputBucket:            # Whether to create output bucket (auto-detected)
+    Type: String  
+    Default: 'true'
+    AllowedValues: ['true', 'false']
 ```
 
 ---
 
 ## Conditions & Logic
 
-Conditions allow conditional resource creation:
+Conditions allow conditional resource creation and logic branching:
 
 ```yaml
 Conditions:
-  UseExplicitInputBucket: !Not [!Equals [!Ref InputBucketName, ""]]   # True if bucket name provided
-  CreateInputBucket: !Equals [!Ref InputBucketName, ""]               # True if should create bucket
+  ShouldCreateInputBucket: !Equals [!Ref CreateInputBucket, 'true']
+  ShouldCreateOutputBucket: !Equals [!Ref CreateOutputBucket, 'true']
 ```
 
-**How it works:**
-- If `InputBucketName=bullseye-pinpoint-staging-input-files` → `UseExplicitInputBucket=true`, `CreateInputBucket=false`
-- If `InputBucketName=""` → `UseExplicitInputBucket=false`, `CreateInputBucket=true`
+**How the simplified bucket logic works:**
+
+### Bucket Creation Logic
+- If `CreateInputBucket=true` → Creates input bucket with name from `InputBucketName`
+- If `CreateInputBucket=false` → Uses existing bucket with name from `InputBucketName`
+- Same logic applies to output bucket with `CreateOutputBucket` and `OutputBucketName`
+
+### Smart Detection
+The deployment script automatically detects if buckets exist:
+```bash
+if aws s3 ls "s3://${INPUT_BUCKET_NAME}" > /dev/null 2>&1; then
+    CreateInputBucket=false  # Use existing bucket
+else
+    CreateInputBucket=true   # Create new bucket
+fi
+```
+
+### Example: Your Current Setup
+```bash
+INPUT_BUCKET_NAME=bullseye-pinpoint-staging-input-files   # Bucket name to use
+OUTPUT_BUCKET_NAME=bullseye-pinpoint-staging-output-files # Bucket name to use
+CreateInputBucket=false   # Automatically set by deploy script (bucket exists)
+CreateOutputBucket=false  # Automatically set by deploy script (bucket exists)
+```
+
+**Result**:
+- Pipeline uses: `bullseye-pinpoint-staging-input-files` (existing bucket)
+- Pipeline uses: `bullseye-pinpoint-staging-output-files` (existing bucket)
+- Total buckets: **0 new buckets created** (uses existing ones)
 
 ---
 
@@ -120,9 +156,9 @@ Conditions:
 
 | Resource Type | Count | Purpose |
 |---------------|-------|---------|
-| `AWS::Serverless::Function` | 7 | Lambda functions (data processing) |
+| `AWS::Serverless::Function` | 9 | Lambda functions (data processing) |
 | `AWS::Serverless::StateMachine` | 2 | Step Functions (workflow orchestration) |
-| `AWS::S3::Bucket` | 2 | Data storage (conditional creation) |
+| `AWS::S3::Bucket` | 0-2 | Data storage (conditionally created only if needed) |
 | `AWS::Serverless::Api` | 1 | REST API endpoints |
 | `AWS::SQS::Queue` | 2 | Dead letter queues (error handling) |
 | `AWS::Logs::LogGroup` | 1 | Centralized logging |
@@ -176,20 +212,29 @@ Globals:
 - **Purpose**: Final processing and storage of standardized data
 - **Triggers**: Step Functions
 - **S3 Access**: Write to output bucket
-- **Environment Variables**: `BUCKET_NAME` (output bucket name)
+- **Environment Variables**: `OUTPUT_BUCKET_NAME`, `BUCKET_NAME` (legacy compatibility)
 - **Code Location**: `functions/nodejs-process-standardized-data/`
 
-#### 6. **EnrichmentProcessorFunction**
+#### 6. **MergeCsvDataFunction**
+- **Purpose**: Merges processed CSV data from distributed map execution
+- **Triggers**: Step Functions
+- **S3 Access**: Read from input bucket, write to output bucket
+- **Environment Variables**: `INPUT_BUCKET_NAME`, `OUTPUT_BUCKET_NAME`, `OUTPUT_BUCKET`
+- **Special**: Higher memory (512MB) and timeout (300s) for data processing
+- **Code Location**: `functions/nodejs-merge-csv-data/`
+
+#### 7. **EnrichmentProcessorFunction**
 - **Purpose**: Enriches contact data with RocketReach and Apollo.io APIs
 - **Triggers**: Step Functions (enrichment pipeline)
 - **S3 Access**: Read from input bucket, write to output bucket
-- **Environment Variables**: `ROCKETREACH_API_KEY`, `APOLLO_API_KEY`, `BUCKET_NAME`
+- **Environment Variables**: `INPUT_BUCKET_NAME`, `OUTPUT_BUCKET_NAME`, `BUCKET_NAME`, `ROCKETREACH_API_KEY`, `APOLLO_API_KEY`
 - **Code Location**: `functions/nodejs-enrichment-processor/`
 
-#### 7. **EnrichmentMergerFunction**
+#### 8. **EnrichmentMergerFunction**
 - **Purpose**: Merges individual enriched contact JSON files
 - **Triggers**: Step Functions
 - **S3 Access**: Read/write to output bucket
+- **Environment Variables**: `OUTPUT_BUCKET_NAME`, `BUCKET_NAME` (legacy compatibility)
 - **Code Location**: `functions/nodejs-enrichment-merger/`
 
 #### 8. **PipelineTriggerFunction**
@@ -206,7 +251,7 @@ Each function has specific IAM permissions:
 ```yaml
 Policies:
   - S3ReadPolicy:               # SAM policy template
-      BucketName: !If [UseExplicitInputBucket, !Ref InputBucketName, ...]
+      BucketName: !Ref InputBucketName
   - Statement:                  # Custom IAM policy
       - Effect: Allow
         Action:
@@ -252,42 +297,129 @@ Policies:
 
 ## S3 Buckets
 
-### Conditional Bucket Creation
+### Simplified Conditional Bucket System
 
-Your template creates S3 buckets **only** when explicit names aren't provided:
+Your template uses a **simplified conditional bucket system** that can either use existing S3 buckets or create new ones based on deployment configuration.
+
+### Current Bucket Logic & Conditions
 
 ```yaml
+Conditions:
+  # Bucket creation logic: Only create buckets if they don't already exist
+  ShouldCreateInputBucket: !Equals [!Ref CreateInputBucket, 'true']
+  ShouldCreateOutputBucket: !Equals [!Ref CreateOutputBucket, 'true']
+```
+
+### Bucket Resources
+
+```yaml
+# Input bucket - only created if CreateInputBucket=true
 InputBucket:
   Type: AWS::S3::Bucket
-  Condition: CreateInputBucket          # Only create if InputBucketName is empty
+  Condition: ShouldCreateInputBucket
   Properties:
-    BucketName: !Sub "${InputBucketBaseName}-${Environment}-${AWS::AccountId}"
+    BucketName: !Ref InputBucketName
 
+# Output bucket - only created if CreateOutputBucket=true  
 OutputBucket:
-  Type: AWS::S3::Bucket  
-  Condition: CreateOutputBucket         # Only create if OutputBucketName is empty
+  Type: AWS::S3::Bucket
+  Condition: ShouldCreateOutputBucket
   Properties:
-    BucketName: !Sub "${OutputBucketBaseName}-${Environment}-${AWS::AccountId}"
+    BucketName: !Ref OutputBucketName
+```
+
+### How Pipeline Bucket Selection Works
+
+The pipeline uses the bucket names directly from parameters:
+
+```yaml
+# In Lambda environment variables:
+INPUT_BUCKET_NAME: !Ref InputBucketName     # Direct bucket name reference
+OUTPUT_BUCKET_NAME: !Ref OutputBucketName   # Direct bucket name reference
+BUCKET_NAME: !Ref OutputBucketName          # Legacy compatibility
 ```
 
 ### Bucket Usage Scenarios
 
-#### Scenario 1: Using Existing Buckets (Your Current Setup)
+#### Scenario 1: Use Existing Buckets (Your Current Setup)
 ```bash
-# In .env or deploy.sh parameters:
-InputBucketName=bullseye-pinpoint-staging-input-files
-OutputBucketName=bullseye-pinpoint-staging-output-files
+# .env file:
+INPUT_BUCKET_NAME=bullseye-pinpoint-staging-input-files
+OUTPUT_BUCKET_NAME=bullseye-pinpoint-staging-output-files
 ```
-**Result**: No new buckets created, uses your existing buckets
 
-#### Scenario 2: Creating New Buckets
+**Deploy script automatically detects** existing buckets and sets:
+- `CreateInputBucket=false`
+- `CreateOutputBucket=false`
+
+**Result**: Uses existing buckets, creates **no new buckets**
+
+#### Scenario 2: Create New Buckets
 ```bash
-# In .env or deploy.sh parameters:
-InputBucketName=""                    # Empty = create new
-OutputBucketName=""                   # Empty = create new
-InputBucketBaseName=my-pipeline-input # Base name for new bucket
+# .env file with non-existing bucket names:
+INPUT_BUCKET_NAME=my-new-input-bucket
+OUTPUT_BUCKET_NAME=my-new-output-bucket
 ```
-**Result**: Creates `my-pipeline-input-staging-036943221302`
+
+**Deploy script detects** buckets don't exist and sets:
+- `CreateInputBucket=true`
+- `CreateOutputBucket=true`
+
+**Result**: Creates **2 new buckets**:
+- `my-new-input-bucket`
+- `my-new-output-bucket`
+
+#### Scenario 3: Mixed Scenario (One Existing, One New)
+```bash
+# .env file:
+INPUT_BUCKET_NAME=existing-input-bucket      # Already exists in AWS
+OUTPUT_BUCKET_NAME=new-output-bucket         # Doesn't exist yet
+```
+
+**Deploy script sets**:
+- `CreateInputBucket=false` (uses existing)
+- `CreateOutputBucket=true` (creates new)
+
+**Result**: Uses 1 existing bucket, creates 1 new bucket
+
+### Automatic Bucket Detection
+
+The deployment script (`deploy.sh`) automatically detects bucket existence:
+
+```bash
+# Check if buckets exist in AWS
+if aws s3 ls "s3://${INPUT_BUCKET_NAME}" > /dev/null 2>&1; then
+    INPUT_BUCKET_EXISTS="true"
+    PARAM_OVERRIDES="${PARAM_OVERRIDES} CreateInputBucket=false"
+else
+    PARAM_OVERRIDES="${PARAM_OVERRIDES} CreateInputBucket=true"
+fi
+```
+
+### Template Output Logic
+
+The outputs show which buckets are being used:
+
+```yaml
+Outputs:
+  InputBucketName:
+    Description: "Name of the S3 input bucket (existing or created)"
+    Value: !Ref InputBucketName
+  
+  OutputBucketName:
+    Description: "Name of the S3 output bucket (existing or created)"
+    Value: !Ref OutputBucketName
+```
+
+### Why This Simplified System?
+
+This design provides **simplicity and reliability**:
+
+1. **No Complexity**: Single bucket names, no conditional logic in Lambda functions
+2. **Automatic Detection**: Deploy script handles bucket existence automatically  
+3. **Error Prevention**: Avoids "AlreadyExists" errors by detecting existing buckets
+4. **Environment Compatibility**: Works with both existing and new bucket setups
+5. **Cost Efficiency**: Only creates buckets when needed
 
 ---
 
@@ -361,13 +493,16 @@ Outputs export values for other stacks or external use:
 ```yaml
 Outputs:
   InputBucketName:
-    Description: "Name of the S3 input bucket"
-    Value: !If 
-      - UseExplicitInputBucket
-      - !Ref InputBucketName          # Your existing bucket name
-      - !Ref InputBucket              # Created bucket reference
+    Description: "Name of the S3 input bucket (existing or created)"
+    Value: !Ref InputBucketName       # Direct bucket name reference
     Export:
       Name: !Sub "${AWS::StackName}-InputBucket"  # Cross-stack reference name
+  
+  OutputBucketName:
+    Description: "Name of the S3 output bucket (existing or created)"
+    Value: !Ref OutputBucketName      # Direct bucket name reference
+    Export:
+      Name: !Sub "${AWS::StackName}-OutputBucket" # Cross-stack reference name
 ```
 
 ---

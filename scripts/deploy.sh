@@ -90,8 +90,8 @@ echo "🚀 Deploying SAM Data Pipeline"
 echo "   Environment: ${ENVIRONMENT}"
 echo "   Region: ${REGION}"
 echo "   Stack: ${STACK_NAME}"
-echo "   Input Bucket Base: ${INPUT_BUCKET_BASE_NAME:-data-pipeline-input}"
-echo "   Output Bucket Base: ${OUTPUT_BUCKET_BASE_NAME:-data-pipeline-output}"
+echo "   Input Bucket: ${INPUT_BUCKET_NAME:-data-pipeline-input}"
+echo "   Output Bucket: ${OUTPUT_BUCKET_NAME:-data-pipeline-output}"
 echo ""
 
 # Pre-deployment validations
@@ -114,6 +114,26 @@ fi
 # Validate template
 echo "📋 Validating SAM template..."
 sam validate --region ${REGION}
+
+# Check if buckets already exist
+echo "🔍 Checking if S3 buckets already exist..."
+INPUT_BUCKET_EXISTS="false"
+OUTPUT_BUCKET_EXISTS="false"
+
+if aws s3 ls "s3://${INPUT_BUCKET_NAME:-data-pipeline-input}" > /dev/null 2>&1; then
+    INPUT_BUCKET_EXISTS="true"
+    echo "✅ Input bucket '${INPUT_BUCKET_NAME:-data-pipeline-input}' already exists"
+else
+    echo "❌ Input bucket '${INPUT_BUCKET_NAME:-data-pipeline-input}' does not exist - will be created"
+fi
+
+if aws s3 ls "s3://${OUTPUT_BUCKET_NAME:-data-pipeline-output}" > /dev/null 2>&1; then
+    OUTPUT_BUCKET_EXISTS="true"
+    echo "✅ Output bucket '${OUTPUT_BUCKET_NAME:-data-pipeline-output}' already exists"
+else
+    echo "❌ Output bucket '${OUTPUT_BUCKET_NAME:-data-pipeline-output}' does not exist - will be created"
+fi
+echo ""
 
 # Check enrichment API key availability
 echo "🔍 Checking enrichment API key availability..."
@@ -175,17 +195,30 @@ if [ "$ENVIRONMENT" = "production" ]; then
 fi
 
 # Deploy with environment-specific config and API key overrides
+# Build parameter overrides with bucket existence logic
+PARAM_OVERRIDES="Environment=${ENVIRONMENT}"
+PARAM_OVERRIDES="${PARAM_OVERRIDES} OpenAIApiKey=${OPENAI_API_KEY}"
+PARAM_OVERRIDES="${PARAM_OVERRIDES} RocketReachApiKey=${ROCKETREACH_API_KEY:-\"\"}"
+PARAM_OVERRIDES="${PARAM_OVERRIDES} ApolloApiKey=${APOLLO_API_KEY:-\"\"}"
+PARAM_OVERRIDES="${PARAM_OVERRIDES} InputBucketName=${INPUT_BUCKET_NAME:-data-pipeline-input}"
+PARAM_OVERRIDES="${PARAM_OVERRIDES} OutputBucketName=${OUTPUT_BUCKET_NAME:-data-pipeline-output}"
+
+# Set bucket creation parameters based on existence
+if [ "$INPUT_BUCKET_EXISTS" = "true" ]; then
+    PARAM_OVERRIDES="${PARAM_OVERRIDES} CreateInputBucket=false"
+else
+    PARAM_OVERRIDES="${PARAM_OVERRIDES} CreateInputBucket=true"
+fi
+
+if [ "$OUTPUT_BUCKET_EXISTS" = "true" ]; then
+    PARAM_OVERRIDES="${PARAM_OVERRIDES} CreateOutputBucket=false"
+else
+    PARAM_OVERRIDES="${PARAM_OVERRIDES} CreateOutputBucket=true"
+fi
+
 sam deploy \
     --config-env ${ENVIRONMENT} \
-    --parameter-overrides \
-        Environment=${ENVIRONMENT} \
-        OpenAIApiKey=${OPENAI_API_KEY} \
-        RocketReachApiKey=${ROCKETREACH_API_KEY:-""} \
-        ApolloApiKey=${APOLLO_API_KEY:-""} \
-        InputBucketBaseName=${INPUT_BUCKET_BASE_NAME:-data-pipeline-input} \
-        OutputBucketBaseName=${OUTPUT_BUCKET_BASE_NAME:-data-pipeline-output} \
-        InputBucketName=${INPUT_BUCKET_NAME:-""} \
-        OutputBucketName=${OUTPUT_BUCKET_NAME:-""}
+    --parameter-overrides ${PARAM_OVERRIDES}
 
 # Post-deployment actions
 echo ""
